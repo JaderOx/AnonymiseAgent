@@ -1,0 +1,42 @@
+# 语言 → ASR 模型映射
+# 修改此文件可随时调整语言与模型的对应关系，无需改代码
+#
+# 字段说明:
+#   model            : ASR 模型名称（须存在于 transcribe.py 的 _MODEL_MODULES 中）
+#   supports_hotwords: 是否支持热词（paraformer 不支持）
+#   supports_speaker : 是否支持说话人识别（paraformer 内置，whisperx 需 pyannote + HF_TOKEN）
+#
+# 未在此列表中的语言将使用 default 模型
+
+default: whisperx         # 未识别语言的首选模型
+fallback: FunASRMLTNano   # whisperx 不可用时的备选
+
+languages:
+  中文:
+    model: paraformer
+    supports_hotwords: false
+    supports_speaker: true
+
+  中文方言:
+    model: FunASRNano
+    supports_hotwords: true
+    supports_speaker: false
+
+  英文:
+    model: whisperx
+    supports_hotwords: true
+    supports_speaker: true
+
+  日文:
+    model: FunASRNano
+    supports_hotwords: true
+    supports_speaker: false
+
+  # 西班牙语及其他欧洲语言使用 FunASRMLTNano
+  西班牙语:
+    model: whisperx
+    supports_hotwords: true
+    supports_speaker: true
+
+  # 其他语言（阿拉伯语、韩语等）使用 whisperx
+  # 如有需要在此添加条目

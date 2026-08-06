@@ -1,0 +1,11 @@
+inputpath-
+
+/path/to/Anonymise_Agent/demo/audio/input
+
+prompt-
+
+数据是中文，单说话人音频，不需要文本匿名。你对比一下seedvc和pitch两个方法的下游结果。
+
+Qwen3.5-9B
+
+/path/to/Anonymise_Agent/demo/workspace/output/downstream

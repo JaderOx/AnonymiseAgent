@@ -1,0 +1,125 @@
+# 语言 → LLM prompt 映射
+# 每种语言包含：
+#   model          : 默认 LLM 模型名称（须在 $LLM_MODEL_DIR/<name> 下存在，默认 ./models）
+#   prompt         : 发送给 LLM 的主体任务说明（用户可通过 --prompt 覆盖）
+#   prompt_suffix  : 格式要求说明，追加在 prompt 之后（不可通过命令行覆盖）
+#   group_prefix   : 每组文本前加的引导语
+#
+# default: 未匹配语言使用的配置（通常为欧洲语言通用版）
+# 修改此文件可随时调整，无需改代码
+
+default:
+  model: gemma-3-27b-it
+  prompt: |
+    Extract strictly the following three types of privacy words from the input text:
+    1. Personal names
+    2. ID numbers, certificate numbers, phone numbers, class numbers, house numbers, and similar identifiers
+    3. Addresses including provinces, districts, counties, roads, etc.
+
+    Special notes:
+    - There may be typos; use context to determine if a word is a privacy term, and output it as-is (do not correct)
+    - Output the minimum unit of each privacy word
+    - Do not treat date references (e.g., "the 3rd", "the 22nd") as identifiers
+  prompt_suffix: |
+    The language to process is '{language}'.
+    Output strictly in the format: <result>word1,word2,word3,...,wordn</result>
+    The final result must be inside <result> </result> tags. Do not use these tags anywhere else.
+    If no qualifying words are found, output: <result>None</result>
+
+    [Example]
+    Input: ... I'm from Henan province, my name is Zhang San, phone number 13312345678 ...
+    Output: <result>Henan,Zhang San,13312345678</result>
+  group_prefix: "Please process the following input and output strictly according to the rules above:"
+
+languages:
+  中文:
+    model: Qwen2.5-32B-Instruct
+    prompt: |
+      严格提取输入文本中的以下三类词：
+      1. 姓名，如张三
+      2. 身份证号/证件号/电话号/班号等标识，如幺九七零，高三九班
+      3. 省、区、县、门牌号等地址，如北京，南阳，中州大道，123号
+
+      特别注意：
+      - "电话"二字不需要输出
+      - 可能有错字，需根据上下文判断是否为所需词，若是需按原词输出，如"贝兴"不纠正为"北京"
+      - 同一个词即使在不同句都出现，无论出现几次都要输出。
+      - 如果同一句的多个隐私信息相连，则分开输出，如"北京安定"输出为"北京","安定"
+    prompt_suffix: |
+      你需要处理的语言是'{language}'，请根据上述规则提取隐私词，
+      并严格按"<result>word1,word2,word3,...wordn</result>"格式输出，不要任何多余符号。
+      最终结果必须放在 <result> </result> 标签中，不要在任何分析中使用这个标签。
+      若无符合条件的词，则输出"<result>None</result>"。
+
+      【示例】
+      输入：... 家是河南的在难养，我25岁，手机幺三三幺，今年二十岁...
+      输出：<result>河南,难养,幺三三幺</result>
+    group_prefix: "请现在处理以下输入，并严格按上述规则输出："
+
+  中文方言:
+    model: Qwen2.5-32B-Instruct
+    prompt: |
+      严格提取输入文本中的以下三类隐私词：
+      1. 姓名，如张三
+      2. 身份证号/证件号/电话号/班号/门牌号等标识，如幺九七零，初二九班
+      3. 省、区、县、路等地址，如北京，南阳，中州大道
+
+      特别注意：
+      - 可能有错字，需根据上下文判断是否为所需词，若是需按原词输出，如"贝兴"不纠正为"北京","一百零三号"不输出为"103号"
+      - 输出最小限度的隐私词的最小单位，如"南阳市中州大道123号惠民医院"应分为"南阳"、"中州大道"、"123号"、"惠民"来输出
+      - 不要把代表日期的三号、二十二号之类的当作第二类标识输出。
+      - 学历，教育阶段等不属于隐私词
+      - 文本中可能会有对心理状态打分的分数，不属于隐私词。
+    prompt_suffix: |
+      你需要处理的语言是'{language}'，请根据上述规则提取隐私词，
+      并严格按"<result>word1,word2,word3,...wordn</result>"格式输出，不要任何多余符号。
+      最终结果必须放在 <result> </result> 标签中，不要在任何分析中使用这个标签。
+      若无符合条件的词，则输出"<result>None</result>"。
+
+      【示例】
+      输入：... 家是河南的在难养，我25岁，手机幺三三幺，今年二十岁...
+      输出：<result>河南,难养,幺三三幺</result>
+    group_prefix: "请现在处理以下输入，并严格按上述规则输出："
+
+  英文:
+    model: Qwen2.5-32B-Instruct
+    prompt: |
+      Extract strictly the following three types of privacy words from the input text:
+      1. Personal names, e.g., John Smith
+      2. ID numbers, certificate numbers, phone numbers, class numbers, house numbers, and similar identifiers
+      3. Addresses including provinces, districts, counties, roads, etc., e.g., New York, Main Street
+
+      Special notes:
+      - There may be typos; use context to determine if a word is a privacy term, and output it as-is
+      - Output the minimum unit of each privacy word
+      - Do not treat date references (e.g., "the 3rd", "the 22nd") as identifiers
+      - Academic credentials and education stages are not privacy words
+    prompt_suffix: |
+      The language to process is '{language}'. Extract privacy words according to the above rules,
+      and output strictly in the format: <result>word1,word2,word3,...,wordn</result>
+      The final result must be inside <result> </result> tags. Do not use these tags anywhere else.
+      If no qualifying words are found, output: <result>None</result>
+
+      [Example]
+      Input: ... I'm from New York, my name is John Smith, phone 555-1234 ...
+      Output: <result>New York,John Smith,555-1234</result>
+    group_prefix: "Please process the following input and output strictly according to the rules above:"
+
+  日文:
+    model: Qwen2.5-32B-Instruct
+    prompt: |
+      入力テキストから以下の3種類のプライバシーワードを厳密に抽出してください：
+      1. 氏名（例：田中太郎）
+      2. 身分証番号・証明書番号・電話番号・班番号・番地などの識別子
+      3. 都道府県・区・郡・道路などの住所（例：東京、渋谷区）
+
+      注意事項：
+      - 誤字がある場合でも、文脈からプライバシーワードと判断できれば元の表記で出力してください
+      - プライバシーワードは最小単位で出力してください
+      - 日付を示す「3日」「22日」などは識別子として出力しないでください
+    prompt_suffix: |
+      処理する言語は'{language}'です。上記のルールに従ってプライバシーワードを抽出し、
+      <result>word1,word2,word3,...,wordn</result> の形式で厳密に出力してください。
+      最終結果は必ず <result> </result> タグ内に含めてください。
+      対象となる単語がない場合は <result>None</result> を出力してください。
+    group_prefix: "以下の入力を処理し、上記のルールに従って厳密に出力してください："

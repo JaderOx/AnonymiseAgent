@@ -1,0 +1,154 @@
+{
+    "younger_than_22": {
+        "female": [
+            {
+                "subject_id": "S0126",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0126/BAC009S0126W0126.wav"
+            },
+            {
+                "subject_id": "S0130",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0130/BAC009S0130W0121.wav"
+            },
+            {
+                "subject_id": "S0133",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0133/BAC009S0133W0125.wav"
+            },
+            {
+                "subject_id": "S0139",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0139/BAC009S0139W0242.wav"
+            }
+        ],
+        "male": [
+            {
+                "subject_id": "S0022",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0022/BAC009S0022W0129.wav"
+            },
+            {
+                "subject_id": "S0035",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0035/BAC009S0035W0139.wav"
+            },
+            {
+                "subject_id": "S0068",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0068/BAC009S0068W0177.wav"
+            },
+            {
+                "subject_id": "S0714",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0714/BAC009S0714W0122.wav"
+            }
+        ]
+    },
+    "22_30": {
+        "female": [
+            {
+                "subject_id": "S0124",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0124/BAC009S0124W0174.wav"
+            },
+            {
+                "subject_id": "S0127",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0127/BAC009S0127W0129.wav"
+            },
+            {
+                "subject_id": "S0131",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0131/BAC009S0131W0143.wav"
+            },
+            {
+                "subject_id": "S0136",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0136/BAC009S0136W0169.wav"
+            }
+        ],
+        "male": [
+            {
+                "subject_id": "S0005",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0005/BAC009S0005W0162.wav"
+            },
+            {
+                "subject_id": "S0011",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0011/BAC009S0011W0146.wav"
+            },
+            {
+                "subject_id": "S0017",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0017/BAC009S0017W0133.wav"
+            },
+            {
+                "subject_id": "S0021",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0021/BAC009S0021W0197.wav"
+            }
+        ]
+    },
+    "30_40": {
+        "female": [
+            {
+                "subject_id": "S0045",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0045/BAC009S0045W0139.wav"
+            },
+            {
+                "subject_id": "S0137",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0137/BAC009S0137W0128.wav"
+            },
+            {
+                "subject_id": "S0146",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0146/BAC009S0146W0135.wav"
+            },
+            {
+                "subject_id": "S0158",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0158/BAC009S0158W0161.wav"
+            }
+        ],
+        "male": [
+            {
+                "subject_id": "S0009",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0009/BAC009S0009W0131.wav"
+            },
+            {
+                "subject_id": "S0010",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0010/BAC009S0010W0127.wav"
+            },
+            {
+                "subject_id": "S0012",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0012/BAC009S0012W0139.wav"
+            },
+            {
+                "subject_id": "S0024",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0024/BAC009S0024W0127.wav"
+            }
+        ]
+    },
+    "older_than_40": {
+        "female": [
+            {
+                "subject_id": "S0128",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0128/BAC009S0128W0143.wav"
+            },
+            {
+                "subject_id": "S0514",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0514/BAC009S0514W0191.wav"
+            },
+            {
+                "subject_id": "S0515",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0515/BAC009S0515W0184.wav"
+            },
+            {
+                "subject_id": "S0598",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0598/BAC009S0598W0190.wav"
+            }
+        ],
+        "male": [
+            {
+                "subject_id": "S003",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0003/BAC009S0003W0137.wav"
+            },
+            {
+                "subject_id": "S0030",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0030/BAC009S0030W0138.wav"
+            },
+            {
+                "subject_id": "S0070",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0070/BAC009S0070W0131.wav"
+            },
+            {
+                "subject_id": "S0113",
+                "wav_path": "/path/to/aishell/data_aishell/wav/train/S0113/BAC009S0113W0127.wav"
+            }
+        ]
+    }
+}

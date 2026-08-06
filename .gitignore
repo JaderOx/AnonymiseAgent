@@ -1,0 +1,43 @@
+# ── 密钥 / 本地配置（切勿提交）──────────────────────────────
+.env
+.env.local
+
+# ── 模型与数据（体积大，不入库）────────────────────────────
+models/
+checkpoints/
+LLMs/
+w2v2-L-robust-6-age-gender/
+CosyVoice/
+tts_methods/
+
+# ── 运行产物（输入 / 中间 / 输出 / 下游）────────────────────
+results/
+output/
+middle/
+seedvc_output/
+demo/workspace/
+_smoke*/
+.lock/
+*.csv
+!docs/**/*.csv
+
+# ── 音频样本（按需：要发布样例可注释掉）────────────────────
+*.wav
+*.flac
+*.mp3
+*.ogg
+!tts_reference/**/*.wav
+
+# ── Python 缓存 ────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# ── 编辑器 / 系统 ──────────────────────────────────────────
+.vscode/
+.idea/
+.DS_Store
+debug.ipynb
+*.log
