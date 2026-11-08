@@ -13,16 +13,36 @@ def get_llm_model_name(language: str, llm_model: str = None) -> str:
     return 'Qwen2.5-32B-Instruct' if language in _QWEN_LANGS else 'gemma-3-27b-it'
 
 
-def load_model(model_name="Qwen2.5-32B-Instruct"):
+def load_model(model_name="Qwen2.5-32B-Instruct", max_memory=None):
     _LLM_DIR = os.environ.get("LLM_MODEL_DIR", "./LLMs")
     model_path = os.path.join(_LLM_DIR, model_name)
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_path,
-        torch_dtype="auto",
-        device_map="auto",
-        trust_remote_code=True
-    )
+    # max_memory：{设备序号: "16GiB"}，显式限制每卡用量，避免 device_map auto
+    # 按总显存均分而压爆有其它进程占用的卡（共享机器场景）。
+    extra = {} if max_memory is None else {"max_memory": max_memory}
+
+    try:
+        model = AutoModelForCausalLM.from_pretrained(
+            model_path,
+            torch_dtype="auto",
+            device_map="auto",
+            trust_remote_code=True,
+            **extra,
+        )
+    except Exception as causal_err:
+        # 多模态模型（如 Qwen3_5ForConditionalGeneration）不能由
+        # AutoModelForCausalLM 加载 → 回退到图文模型类（纯文本对话同样可用）
+        from transformers import AutoModelForImageTextToText
+        try:
+            model = AutoModelForImageTextToText.from_pretrained(
+                model_path,
+                torch_dtype="auto",
+                device_map="auto",
+                trust_remote_code=True,
+                **extra,
+            )
+        except Exception:
+            raise causal_err
     tokenizer = AutoTokenizer.from_pretrained(model_path)
     return model, tokenizer
 
@@ -67,7 +87,7 @@ def generate_response(
         use_cache=True
     )
     generated_ids = [
-        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, 
+        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids,
     generated_ids)
     ]
 
@@ -77,11 +97,11 @@ def generate_response(
 
 if __name__ == "__main__":
     # gemma-3-27b-it / Qwen2.5-32B-Instruct / gpt-oss-20b
-    
+
     language = "中文"
     model, tokenizer = load_model('Qwen3.5-9B')
     prompt = "用微信聊天的非正式的，简短的语气回答我所有的消息。你的角色是我的女朋友"
 
     response = generate_response(model, tokenizer, prompt=prompt)
     print("模型回复：", response)
-    
+

@@ -41,3 +41,10 @@ __pycache__/
 .DS_Store
 debug.ipynb
 *.log
+
+# Private experiments and runtime memory
+attackers/
+qwenomni_classify/
+logs/
+doc/
+memory/runtime/

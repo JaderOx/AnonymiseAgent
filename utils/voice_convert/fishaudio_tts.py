@@ -33,7 +33,7 @@ import torch
 
 
 DESCRIPTION = (
-    "FishAudio TTS（可选按语言+speaker_info 选多语言参考音色，敏感词替换为”某”）"
+    "Resyn（FishAudio 引擎）ASR→替换→TTS 重合成（可选按语言+speaker_info 选多语言参考音色，敏感词替换为”某”）"
 )
 
 # ── 默认路径（基于项目根目录，可通过环境变量覆盖）────────────────────────────
@@ -776,7 +776,7 @@ def batch_convert_fn(
     **_,
 ):
     if not trans_dir or not os.path.isdir(trans_dir):
-        raise ValueError("fishaudio_tts 需要有效的 trans_dir（句级转录 JSON）")
+        raise ValueError("Resyn 需要有效的 trans_dir（句级转录 JSON）")
 
     os.makedirs(output_dir, exist_ok=True)
     mask_root = _tts_mask_dir_resolved(mask_dir, logger, "FishAudioTTS")

@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import argparse
+from utils.vc_names import canonical_method
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -28,14 +29,14 @@ _ASR_CONDA_ENV = {
 }
 
 _VC_CONDA_ENV = {
-    'mcadams':      None,
-    'formant':      None,
+    'formant_lpc':  None,
+    'formant_spec': None,
     'pitch':        None,
     'combined':     None,
-    'seedvc':       None,
+    'NeuralVC':     None,
     # 子进程 conda 名：与 run_in_isolation 一致；若 CosyVoice 装在 fishaudio 环境里可改为 'fishaudio'
     'cosyvoice_tts': 'fishaudio',
-    'fishaudio_tts': 'fishaudio',
+    'Resyn': 'fishaudio',
 }
 
 
@@ -133,17 +134,18 @@ def trans(wav_dir, asr_model, trans_dir, hotwords, language, logger_file, mode, 
 
 def vc(input_dir, output_dir, method, trans_dir, logger_file, mode,
        num_workers, mask_dir, mask_method, language, whole_audio=False):
+    method = canonical_method(method)
     logger = get_logger(logger_file, 'vc', mode)
     from voice_convert import batch_convert
 
     # TTS 类方法（有 batch_fn，无 fn）不支持全音频整段模式
-    _TTS_METHODS = {'fishaudio_tts', 'cosyvoice_tts'}
+    _TTS_METHODS = {'Resyn', 'cosyvoice_tts'}
     if whole_audio and method in _TTS_METHODS:
         logger.error(
             f"VC 方法 '{method}' 是 TTS 方法，不支持全音频模式（--vc_whole），已跳过"
         )
         return
-        
+
     batch_convert(
         input_dir=input_dir,
         output_dir=output_dir,
@@ -174,13 +176,13 @@ def main():
                         help='步骤2：文本内容匿名（依赖 trans_origin）')
     parser.add_argument('--vc', action='store_true',
                         help='步骤3：声线转换（依赖 text_only，或直接用 input_dir）')
-    parser.add_argument('--vc_method',
-                        choices=['mcadams', 'formant', 'pitch', 'combined', 'seedvc',
-                                 'fishaudio_tts', 'cosyvoice_tts'],
-                        default='seedvc',
-                        help='VC 方法（combined = 共振峰缩放+变调；seedvc = 神经网络，需 GPU, 默认seedvc）')
+    parser.add_argument('--vc_method', type=canonical_method,
+                        choices=['formant_lpc', 'formant_spec', 'pitch', 'combined', 'NeuralVC',
+                                 'Resyn', 'cosyvoice_tts'],
+                        default='NeuralVC',
+                        help='VC 方法（combined = 共振峰缩放+变调；NeuralVC = 神经网络，需 GPU, 默认NeuralVC）')
     parser.add_argument('--vc_whole', action='store_true',
-                        help='VC 全音频模式：整段送入处理，不按转录分句（适合短音频；不支持 fishaudio_tts/cosyvoice_tts）')
+                        help='VC 全音频模式：整段送入处理，不按转录分句（适合短音频；不支持 Resyn/cosyvoice_tts）')
     parser.add_argument('--vc_workers', type=int, default=1,
                         help='VC 并行进程数（默认 1，多文件时可设为 CPU 核数的一半）')
     parser.add_argument('--eval', action='store_true',

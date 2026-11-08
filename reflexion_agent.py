@@ -16,11 +16,14 @@ import re
 import json
 import time
 import argparse
+from utils.vc_names import canonical_method
 import sys
 import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+from utils.agent_selection import final_vc_from as _final_vc_from
 
 from agent import (
     trans, mask, vc,
@@ -32,7 +35,7 @@ from utils.logger_example import setup_logger
 from utils.manage_module_memory import run_in_isolation
 
 # 可用的 VC 方法
-VC_METHODS = ["mcadams", "formant", "pitch", "combined", "seedvc", "fishaudio_tts", "cosyvoice_tts"]
+VC_METHODS = ["formant_lpc", "formant_spec", "pitch", "combined", "NeuralVC", "Resyn", "cosyvoice_tts"]
 
 # 指标含义（给 LLM 参考）
 METRIC_DESCRIPTIONS = {
@@ -190,7 +193,7 @@ def _handle_voice_conversion(ctx, method, with_mask=False, num_workers=1,
 
 def _handle_evaluation(ctx, language, gt_dir="", subject_map_path=""):
     ctx.logger.debug(f"[handler] _handle_evaluation: language={language}, gt_dir={gt_dir}, subject_map_path={subject_map_path}")
-    method = ctx.vc_method_used or 'seedvc'
+    method = ctx.vc_method_used or 'NeuralVC'
     text_vc_dir = os.path.join(ctx.output_dir, f'text+{method}')
     vc_only_dir = os.path.join(ctx.output_dir, method)
     text_only   = os.path.join(ctx.output_dir, 'text_only')
@@ -277,7 +280,7 @@ TOOLS = [
         name="run_voice_conversion",
         description="声线转换：改变说话人声线特征",
         parameters={
-            "method": "string (必填, mcadams/formant/pitch/combined/seedvc/fishaudio_tts/cosyvoice_tts)",
+            "method": "string (必填, formant_lpc/formant_spec/pitch/combined/NeuralVC/Resyn/cosyvoice_tts)",
             "with_mask": "bool (可选, 默认 false)",
             "num_workers": "int (可选, 默认1)",
             "whole_audio": "bool (可选, 默认 false)",
@@ -358,6 +361,12 @@ def _parse_json_output(text: str) -> dict:
 
 
 def _validate_plan(plan: dict) -> Optional[str]:
+    if isinstance(plan, dict):
+        for step in plan.get("steps", []):
+            if isinstance(step, dict) and step.get("tool") == "run_voice_conversion":
+                params = step.get("params")
+                if isinstance(params, dict) and isinstance(params.get("method"), str):
+                    params["method"] = canonical_method(params["method"])
     """验证 plan 结构。"""
     if plan.get("error"):
         return f"无法从 LLM 输出中提取执行计划，原始输出:\n{plan.get('raw', '')}"
@@ -386,7 +395,7 @@ REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评�
 
 【决策规则】
 先看用户请求的类型：
-1. 如果用户明确指定了 VC 方法（如"用seedvc"、"做seedvc"），且该方法已在历史记录中成功执行 → 直接 done=true，不要换方法。
+1. 如果用户明确指定了 VC 方法（如"用NeuralVC"、"做NeuralVC"），且该方法已在历史记录中成功执行 → 直接 done=true，不要换方法。
 2. 如果用户描述的是抽象目标（如"SNR尽量高"、"不要改变韵律"），则根据指标判断。当前方法能满足目标 → done=true；不能满足 → 换一个不同的方法重试。
 
 不要因为看到历史记录中有某个方法就认为它失败了。历史记录只是记录了已尝试过的方法和对应指标。
@@ -394,20 +403,20 @@ REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评�
 【输出格式】只输出 JSON，以 {{ 开头、以 }} 结尾。
 
 满意时:
-{{"done":true,"reason":"简短说明","summary":"最终结果摘要"}}
+{{"done":true,"reason":"简短说明","summary":"最终结果摘要","best_vc_method":"从已尝试方法中选择最终最佳方法"}}
 
 不满意时:
 {{"done":false,"reason":"简短说明","new_vc_method":"方法名"}}
 
 示例:
-用户要求"用seedvc"，seedvc已执行:
-{{"done":true,"reason":"用户指定seedvc，已成功执行","summary":"seedvc, SNR=47dB"}}
+用户要求"用NeuralVC"，NeuralVC已执行:
+{{"done":true,"reason":"用户指定NeuralVC，已成功执行","summary":"NeuralVC, SNR=47dB"}}
 
 用户要求"SNR尽量高"，当前 pitch SNR=15dB:
-{{"done":false,"reason":"pitch的SNR只有15dB，seedvc通常SNR更高","new_vc_method":"seedvc"}}
+{{"done":false,"reason":"pitch的SNR只有15dB，NeuralVC通常SNR更高","new_vc_method":"NeuralVC"}}
 
-用户要求"不要改变韵律"，当前 seedvc pit_pcc=0.92:
-{{"done":true,"reason":"seedvc的pit_pcc=0.92，韵律基本保持","summary":"seedvc, pit_pcc=0.92, SNR=35dB"}}"""
+用户要求"不要改变韵律"，当前 NeuralVC pit_pcc=0.92:
+{{"done":true,"reason":"NeuralVC的pit_pcc=0.92，韵律基本保持","summary":"NeuralVC, pit_pcc=0.92, SNR=35dB"}}"""
 
 
 def _build_context_info(ctx):
@@ -580,7 +589,7 @@ class ReflexionAgent:
 
 示例:
 用户: "匿名化中文音频，不需要内容匿名"
-{{"language":"中文","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"中文"}}}},{{"tool":"run_voice_conversion","params":{{"method":"seedvc","language":"中文"}}}},{{"tool":"run_evaluation","params":{{"language":"中文"}}}}]}}"""
+{{"language":"中文","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"中文"}}}},{{"tool":"run_voice_conversion","params":{{"method":"NeuralVC","language":"中文"}}}},{{"tool":"run_evaluation","params":{{"language":"中文"}}}}]}}"""
 
         user_msg = (
             f"【目录信息】\n{context_info}\n"
@@ -686,6 +695,9 @@ class ReflexionAgent:
         self.logger.info("向 LLM 请求反思决策...")
 
         def _validate_decision(d):
+            for key in ("new_vc_method", "best_vc_method"):
+                if isinstance(d.get(key), str):
+                    d[key] = canonical_method(d[key])
             if "done" not in d:
                 return "缺少 'done' 字段"
             if not d["done"] and "new_vc_method" not in d:
@@ -734,13 +746,14 @@ class ReflexionAgent:
         language = plan.get("language", "中文")
         reasoning = plan.get("reasoning", "")
         steps = plan["steps"]
+        with_mask = any(step["tool"] == "run_mask" for step in steps)
         self.logger.debug(f"[初始计划] language={language}, reasoning={reasoning}")
         self.logger.debug(f"[初始计划] steps={[s['tool'] for s in steps]}")
 
         initial_vc = None
         for s in steps:
             if s["tool"] == "run_voice_conversion":
-                initial_vc = s["params"].get("method", "seedvc")
+                initial_vc = s["params"].get("method", "NeuralVC")
                 break
 
         print(f"语言: {language}")
@@ -771,6 +784,7 @@ class ReflexionAgent:
         # ── 3. Reflexion 循环 ───────────────────────────────────────────────
         history = [{"vc_method": initial_vc, "metrics": current_metrics}]
 
+        final_decision = None
         for reflection_round in range(max_reflections):
             self.logger.debug(f"[反思循环] 第 {reflection_round + 1}/{max_reflections} 轮")
             print(f"\n{'='*55}")
@@ -783,6 +797,7 @@ class ReflexionAgent:
             print(f"决策: {json.dumps(decision, ensure_ascii=False)}")
 
             if decision.get("done", True):
+                final_decision = decision
                 reason = decision.get("reason", "")
                 summary = decision.get("summary", "")
                 print(f"\n✅ 完成: {reason}")
@@ -798,6 +813,7 @@ class ReflexionAgent:
 
             tried = [h["vc_method"] for h in history]
             if new_vc in tried:
+                final_decision = {"best_vc_method": new_vc}
                 self.logger.warning(f"[反思] VC 方法 {new_vc} 已试过 (历史: {tried})，终止反思")
                 print(f"VC 方法 {new_vc} 已经试过，终止反思")
                 break
@@ -808,8 +824,8 @@ class ReflexionAgent:
             print(f"{'='*55}")
             print(f"执行: vc({new_vc}) → eval")
 
-            vc_step = {"tool": "run_voice_conversion", "params": {"method": new_vc, "language": language}}
-            eval_step = {"tool": "run_evaluation", "params": {"language": language}}
+            vc_step = {"tool": "run_voice_conversion", "params": {"method": new_vc, "language": language, "with_mask": with_mask}}
+            eval_step = {"tool": "run_evaluation", "params": {"language": language, "with_mask": with_mask}}
             self.logger.debug(f"[重试] vc_step={json.dumps(vc_step, ensure_ascii=False)}")
             self.logger.debug(f"[重试] eval_step={json.dumps(eval_step, ensure_ascii=False)}")
 
@@ -840,6 +856,11 @@ class ReflexionAgent:
             self.logger.warning(f"[主循环] 达到最大反思次数 ({max_reflections})")
             print(f"\n达到最大反思次数 ({max_reflections})，使用最后的结果")
 
+        final_vc = _final_vc_from(final_decision, history)
+        self.ctx.vc_method_used = final_vc
+        current_metrics = next((h["metrics"] for h in reversed(history)
+                                if h["vc_method"] == final_vc), {})
+
         # ── 4. 最终汇总 ─────────────────────────────────────────────────────
         self.logger.debug(f"[最终汇总] 共 {len(history)} 次尝试")
         for i, h in enumerate(history):
@@ -858,6 +879,7 @@ class ReflexionAgent:
             "attempts": len(history),
             "history": history,
             "final_metrics": current_metrics,
+            "final_vc_method": final_vc,
         }
 
 
@@ -906,7 +928,7 @@ def main():
     if result and result.get("success"):
         history = result.get("history", [])
         if history:
-            print(f"\n最终使用 VC 方法: {history[-1]['vc_method']}")
+            print(f"\n最终使用 VC 方法: {result.get('final_vc_method')}")
         else:
             print("\n执行完成（无需反思）。")
     else:

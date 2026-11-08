@@ -4,7 +4,7 @@ from openai import OpenAI
 def load_openai():
     client = OpenAI(
         base_url=os.environ.get("BASE_URL"),
-        api_key=os.environ.get("API_KEY"),
+        api_key=os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY")
     )
     return client
 
@@ -25,8 +25,8 @@ def recognize(model_result):
     return model_result.content
 
 if __name__ == "__main__":
-    model = "gpt-5-nano-2025-08-07"
-    prompt = "不要多余输出任何东西，请输出<result>None</result>"
+    model = os.environ.get("AGENT_LLM_MODEL", "your-api-model")
+    prompt = "你是什么模型？"
     client = load_openai()
     res = generate_response(model=model, client=client, prompt=prompt)
     print(res)

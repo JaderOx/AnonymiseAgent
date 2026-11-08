@@ -15,12 +15,16 @@ import re
 import json
 import time
 import argparse
+from utils.vc_names import canonical_method
+import shutil
 import sys
 import subprocess
 import tempfile
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, Optional
+
+from utils.agent_selection import final_vc_from as _final_vc_from
 
 from agent import (
     trans, mask, vc,
@@ -30,9 +34,11 @@ from agent import (
 )
 from utils.logger_example import setup_logger
 from utils.manage_module_memory import run_in_isolation
+from utils.agent_memory import (TwoLayerMemory, fallback_classify, _validate_experience,
+                                is_valid_new_task_type)
 
 # 可用的 VC 方法
-VC_METHODS = ["mcadams", "formant", "pitch", "seedvc", "fishaudio_tts"]
+VC_METHODS = ["formant_lpc", "formant_spec", "pitch", "NeuralVC", "Resyn"]
 
 # 指标含义（给 LLM 参考）
 METRIC_DESCRIPTIONS = {
@@ -49,6 +55,28 @@ DOWNSTREAM_METRIC_DESCRIPTIONS = {
     "downstream_bacc": "下游分类任务 Balanced Accuracy (0-1)，越高越好",
     "downstream_f1": "下游分类任务 Macro F1 (0-1)，越高越好",
 }
+
+# 初始计划 system prompt（规划提示词）
+INITIAL_PLAN_PROMPT = f"""你是语音匿名处理 Agent。根据用户请求生成 JSON 执行计划。
+
+【可用工具】
+- run_transcription: ASR 转录。参数: language(必填，且必须用中文，如"中文"/"英文"/"日文"/"西班牙语"), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。
+- run_mask: 内容匿名（依赖转录）。参数: language(必填，且必须用中文，如"中文"/"英文"/"日文"/"西班牙语")。
+- run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language
+- run_evaluation: 评估。参数: language(必填)
+
+【步骤依赖】
+- run_mask 依赖 run_transcription
+- run_voice_conversion 独立，with_mask=true 时需要 mask 输出
+- run_evaluation 依赖 run_transcription，且需要 mask 或 vc 输出
+
+【输出格式】在适当位置输出 JSON，以 {{ 开头。
+{{"language":"语言","reasoning":"分析","steps":[{{"tool":"工具名","params":{{}}}}]}}
+
+示例:
+用户: "匿名化英文音频，不需要内容匿名"
+{{"language":"英文","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"英文"}}}},{{"tool":"run_voice_conversion","params":{{"method":"NeuralVC","language":"英文"}}}},{{"tool":"run_evaluation","params":{{"language":"英文"}}}}]}}
+"""
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -195,7 +223,7 @@ def _handle_voice_conversion(ctx, method, with_mask=False, num_workers=1,
 
 def _handle_evaluation(ctx, language, gt_dir="", subject_map_path="", with_mask=False):
     ctx.logger.debug(f"[handler] _handle_evaluation: language={language}, gt_dir={gt_dir}, subject_map_path={subject_map_path}, with_mask={with_mask}")
-    method = ctx.vc_method_used or 'seedvc'
+    method = ctx.vc_method_used or 'NeuralVC'
     text_vc_dir = os.path.join(ctx.output_dir, f'text+{method}')
     vc_only_dir = os.path.join(ctx.output_dir, method)
     text_only   = os.path.join(ctx.output_dir, 'text_only')
@@ -319,7 +347,7 @@ TOOLS = [
         name="run_voice_conversion",
         description="声线转换：改变说话人声线特征",
         parameters={
-            "method": "string (必填, mcadams/formant/pitch/combined/seedvc/fishaudio_tts/cosyvoice_tts)",
+            "method": "string (必填, formant_lpc/formant_spec/pitch/combined/NeuralVC/Resyn/cosyvoice_tts)",
             "with_mask": "bool (可选, 默认 false)",
             "num_workers": "int (可选, 默认1)",
             "whole_audio": "bool (可选, 默认 false)",
@@ -400,6 +428,12 @@ def _parse_json_output(text: str) -> dict:
 
 
 def _validate_plan(plan: dict) -> Optional[str]:
+    if isinstance(plan, dict):
+        for step in plan.get("steps", []):
+            if isinstance(step, dict) and step.get("tool") == "run_voice_conversion":
+                params = step.get("params")
+                if isinstance(params, dict) and isinstance(params.get("method"), str):
+                    params["method"] = canonical_method(params["method"])
     """验证 plan 结构。"""
     if plan.get("error"):
         return f"无法从 LLM 输出中提取执行计划，原始输出:\n{plan.get('raw', '')}"
@@ -428,7 +462,7 @@ REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评�
 
 
 【决策规则】
-1. 若用户指定了具体方法（如“用seedvc”），且历史中该方法已成功，则直接结束（done=true）。
+1. 若用户指定了具体方法（如“用NeuralVC”），且历史中该方法已成功，则直接结束（done=true）。
 2. 若用户只提出抽象目标（如“SNR尽量高”），则用指标判定：当前方法若满足目标即结束；否则从**未尝试过**的方法中另选一个重试。
 3. 若用户要求某指标“最高/最低”，需要对比所有方法后再决定，不可提前结束。
 4. 重复选择已尝试过的方法将**直接终止后续探索**，务必仅在确信它已是最优选择时使用。
@@ -438,17 +472,20 @@ REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评�
 【输出格式】只输出 JSON，以 {{ 开头、以 }} 结尾。
 
 满意时:
-{{"done":true,"reason":"简短说明","summary":"最终结果摘要"}}
+{{"done":true,"reason":"简短说明","summary":"最终结果摘要","best_vc_method":"最终认定的最优方法名（从已尝试方法中选，不一定是最后尝试的那个）"}}
 
 不满意时:
 {{"done":false,"reason":"简短说明","new_vc_method":"方法名"}}
 
 示例:
-用户要求"用seedvc"，seedvc已执行:
-{{"done":true,"reason":"用户指定seedvc，已成功执行","summary":"seedvc"}}
+用户要求"用NeuralVC"，NeuralVC已执行:
+{{"done":true,"reason":"用户指定NeuralVC，已成功执行","summary":"NeuralVC","best_vc_method":"NeuralVC"}}
+
+遍历全部方法后认定 pitch 综合最优（当前最后尝试的是 formant_spec）:
+{{"done":true,"reason":"pitch在匿名与下游可用性之间平衡最好","summary":"pitch: EER=42%, bacc=0.67","best_vc_method":"pitch"}}
 
 用户要求"SNR尽量高"，当前 pitch SNR=15dB:
-{{"done":false,"reason":"pitch的SNR只有15dB，seedvc通常SNR更高","new_vc_method":"seedvc"}}
+{{"done":false,"reason":"pitch的SNR只有15dB，NeuralVC通常SNR更高","new_vc_method":"NeuralVC"}}
 """
 
 
@@ -534,18 +571,16 @@ def _llm_infer_worker(model_name, sys_prompt, user_prompt, output_file, gen_kwar
 
 class ReflexionAgent:
     def __init__(self, input_dir, output_dir, middle_dir, llm_model=None, mode='INFO',
-                 temperature=0.01, max_new_tokens=2048, repetition_penalty=1.05, open_source=True):
+                 temperature=0.01, max_new_tokens=2048, repetition_penalty=1.05, open_source=True,
+                 memory_path=None, use_memory=True, memory_exclude_dataset=None):
         self.input_dir = os.path.abspath(input_dir)
         self.output_dir = output_dir or os.path.join(os.path.dirname(self.input_dir), 'output')
         self.middle_dir = middle_dir or os.path.join(os.path.dirname(self.input_dir), 'middle')
         self.mode = mode
 
         if llm_model is None:
-            try:
-                from configs.config_loader import get_llm_config
-                self.llm_model = get_llm_config('中文')['model']
-            except Exception:
-                self.llm_model = 'Qwen2.5-32B-Instruct'
+            # 默认 LLM：Qwen2.5-32B-Instruct；AGENT_LLM_MODEL 可覆盖
+            self.llm_model = os.environ.get('AGENT_LLM_MODEL', 'Qwen2.5-32B-Instruct')
         else:
             self.llm_model = llm_model
 
@@ -570,6 +605,20 @@ class ReflexionAgent:
         # ── 评估额外参数 ──
         self.gt_dir = ""
         self.subject_map_path = ""
+
+        # ── 跨运行双层 memory（失败/关闭时 Agent 行为与无 memory 完全一致） ──
+        from utils.agent_memory import infer_dataset_name
+        self._dataset_name = infer_dataset_name(self.input_dir)
+        self.task_meta = None      # run() 开头由 _classify_request 填充
+        self.memory = None
+        self._memory_exclude = memory_exclude_dataset  # recall 时排除某数据集的经验（LOO 消融）
+        if use_memory:
+            try:
+                self.memory = TwoLayerMemory(root=memory_path or os.path.join(os.path.dirname(os.path.abspath(__file__)), 'memory'), logger=self.logger)
+            except Exception as e:
+                self.logger.warning(f"[Memory] 初始化失败（按无 memory 运行）: {e}")
+            if self._memory_exclude and self.memory is not None:
+                self.logger.info(f"[Memory] LOO 模式：recall 时排除数据集 '{self._memory_exclude}' 的经验")
 
     def _call_llm(self, sys_prompt: str, user_prompt: str, gen_override: dict = None) -> str:
         """在子进程中调用 LLM，进程退出后显存自动释放。返回原始响应文本。"""
@@ -639,7 +688,7 @@ class ReflexionAgent:
 
     def _resolve_anon_audio_dir(self):
         """找到当前 VC 输出的匿名音频目录。"""
-        method = self.ctx.vc_method_used or 'seedvc'
+        method = self.ctx.vc_method_used or 'NeuralVC'
         from agent import _has_audio, _has_json
         has_mask = _has_json(self.ctx.mask_dir)
         candidates = []
@@ -809,7 +858,7 @@ class ReflexionAgent:
 
     def _run_downstream_for_current_vc(self):
         """一键：找匿名音频 → 生成 data.json → 跑下游 → 返回扁平指标。"""
-        method = self.ctx.vc_method_used or 'seedvc'
+        method = self.ctx.vc_method_used or 'NeuralVC'
         anon_dir = self._resolve_anon_audio_dir()
         if not anon_dir:
             # 匿名音频目录不存在（被跳过），直接用 VC 方法名构造路径
@@ -843,37 +892,108 @@ class ReflexionAgent:
                 if self.subject_map_path and not params.get("subject_map_path"):
                     params["subject_map_path"] = self.subject_map_path
 
+    # ── 任务信息提取（双层 memory 的入口）────────────────────────────────────
+
+    def _classify_request(self, user_request: str) -> dict:
+        """从用户 request 原文提取任务信息（task_type/语言/说话人数/下游任务/目标）。
+
+        只提取原文明确写出的字段，提取不到 → 字段缺省 + warnings，禁止 LLM 猜测。
+        LLM 失败时退回 fallback_classify（正则）。返回值同时喂给
+        recall_for_prompt（选同领域经验）和 record_run（写 run 文件）。
+        """
+        if self.memory is None:
+            return {}
+        vocab = self.memory.task_types
+        vocab_str = "\n".join(f"  - {k}: {v}" for k, v in sorted(vocab.items()))
+        sys_prompt = (
+            "你是任务信息提取器。从用户的语音匿名化请求原文中提取任务信息，只输出 JSON。"
+        )
+        user_prompt = (
+            f"【用户请求原文】\n{user_request}\n\n"
+            f"【下游任务领域词表（task_type 优先从中选；确属新领域时可提出新的小写英文"
+            f" snake_case 名称并给 task_type_desc，都不符合才用 other）】\n{vocab_str}\n\n"
+            "输出 JSON（不要输出其他内容）：\n"
+            '{"task_type": "词表之一或新的snake_case", '
+            '"task_type_desc": "仅当提出新 task_type 时给中文一句话描述，否则null", '
+            '"language": "语言或null", '
+            '"n_speakers": 说话人数量整数或null, "downstream_task": "下游任务描述或null", '
+            '"goal": "用户对匿名化的目标要求或null"}\n'
+            "严格要求：只从请求原文中提取，原文没写的字段输出 null，禁止猜测或补全。"
+        )
+
+        def _validate(d):
+            if not isinstance(d, dict):
+                return "输出非 dict"
+            tt = d.get('task_type')
+            if tt is not None and tt != 'other' and tt not in vocab:
+                if not is_valid_new_task_type(tt):
+                    return f"task_type「{tt}」不在词表且不是合法的小写 snake_case 新类型名"
+            ns = d.get('n_speakers')
+            if ns is not None and not isinstance(ns, int):
+                return "n_speakers 必须是整数或 null"
+            return None
+
+        meta = None
+        try:
+            out = self._call_llm_with_retry(sys_prompt, user_prompt, validator=_validate)
+            if not out.get('error'):
+                tt = out.get('task_type') or None
+                if tt and tt not in vocab and tt != 'other':
+                    # agent 自主扩展：新领域自动入表（task_types.json），下次运行直接复用
+                    self.memory.register_task_type(tt, out.get('task_type_desc') or None)
+                meta = {
+                    'task_type': tt,
+                    'language': out.get('language') or None,
+                    'n_speakers': out.get('n_speakers'),
+                    'downstream_task': out.get('downstream_task') or None,
+                    'goal': out.get('goal') or None,
+                    'source': 'llm',
+                    'warnings': [],
+                }
+        except Exception as e:
+            self.logger.warning(f"[Memory] 任务信息 LLM 提取失败: {e}")
+
+        if meta is None:
+            meta = fallback_classify(user_request)
+            self.logger.info("[Memory] 使用规则版任务信息提取（fallback_classify）")
+
+        # 缺字段只提示，不猜测；dataset 记录在 run 文件里另存
+        missing = [k for k in ('task_type', 'language', 'n_speakers', 'downstream_task')
+                   if meta.get(k) in (None, '')]
+        if missing:
+            msg = (f"任务信息缺少字段 {missing}（用户 request 原文未提供，"
+                   f"建议在 -r 中写明：语言/说话人数量/下游任务）")
+            meta.setdefault('warnings', []).append(msg)
+            self.logger.warning(f"[Memory] {msg}")
+            print(f"[WARNING] {msg}")
+        self.logger.info(f"[Memory] task_meta = {json.dumps(meta, ensure_ascii=False)}")
+        return meta
+
     # ── 初始计划 ─────────────────────────────────────────────────────────────
 
     def _generate_initial_plan(self, user_request: str) -> dict:
         context_info = _build_context_info(self.ctx)
 
-        plan_prompt = f"""你是语音匿名处理 Agent。根据用户请求生成 JSON 执行计划。
-
-【可用工具】
-- run_transcription: ASR 转录。参数: language(必填，且必须用中文，如"中文"/"英文"/"日文"/"西班牙语"), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。
-- run_mask: 内容匿名（依赖转录）。参数: language(必填，且必须用中文，如"中文"/"英文"/"日文"/"西班牙语")。
-- run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language
-- run_evaluation: 评估。参数: language(必填)
-
-【步骤依赖】
-- run_mask 依赖 run_transcription
-- run_voice_conversion 独立，with_mask=true 时需要 mask 输出
-- run_evaluation 依赖 run_transcription，且需要 mask 或 vc 输出
-
-【输出格式】在适当位置输出 JSON，以 {{ 开头。
-{{"language":"语言","reasoning":"分析","steps":[{{"tool":"工具名","params":{{}}}}]}}
-
-示例:
-用户: "匿名化英文音频，不需要内容匿名"
-{{"language":"英文","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"英文"}}}},{{"tool":"run_voice_conversion","params":{{"method":"seedvc","language":"英文"}}}},{{"tool":"run_evaluation","params":{{"language":"英文"}}}}]}}
-"""
+        plan_prompt = INITIAL_PLAN_PROMPT
 
         user_msg = (
             # f"【目录信息】\n{context_info}\n"
             f"【用户请求】\n{user_request}\n\n"
-            "如果用户要求使用多种声线匿名方法，这不是你的任务，任选一种作为计划执行即可。请输出 JSON 执行计划：\n"
         )
+
+        # ── 注入跨运行双层 memory：Layer-1 任务级经验 + Layer-2 同类任务运行细节 ──
+        if self.memory:
+            mem_block = self.memory.recall_for_prompt(
+                task_meta=self.task_meta, exclude_dataset=self._memory_exclude)
+            if mem_block:
+                user_msg += (
+                    f"{mem_block}\n\n"
+                    "制定计划时可参考以上经验选择初始 VC 方法：与当前任务同领域（task_type）"
+                    "的任务经验参考价值最高（可直接沿用已验证的最终方案、避开已证实的失败方法），"
+                    "其他领域仅供参考。\n\n"
+                )
+
+        user_msg += "如果用户要求使用多种声线匿名方法，这不是你的任务，任选一种作为计划执行即可。请输出 JSON 执行计划：\n"
 
         self.logger.info("向 LLM 请求初始计划...")
         plan = self._call_llm_with_retry(plan_prompt, user_msg, validator=_validate_plan)
@@ -932,9 +1052,7 @@ class ReflexionAgent:
         if vc_method:
             import csv as _csv
             # 按优先级查找: text+method > method
-            csv_candidates = [f'evaluate_{vc_method}.csv']
-            if has_mask:
-                csv_candidates.insert(0, f'evaluate_text_{vc_method}.csv')
+            csv_candidates = [f'evaluate_text_{vc_method}.csv' if has_mask else f'evaluate_{vc_method}.csv']
             for csv_name in csv_candidates:
                 eval_csv = os.path.join(self.output_dir, csv_name)
                 if os.path.exists(eval_csv):
@@ -955,8 +1073,8 @@ class ReflexionAgent:
 
         # ── 注入 with_mask 到评估步骤 ──
         for step in steps:
-            if step["tool"] == "run_evaluation":
-                step.setdefault("params", {})["with_mask"] = has_mask
+            if step["tool"] in ("run_voice_conversion", "run_evaluation"):
+                step.setdefault("params", {})["with_mask"] = has_mask or step.get("params", {}).get("with_mask", False)
 
         for i, step in enumerate(steps):
             tool_name = step["tool"]
@@ -1026,6 +1144,14 @@ class ReflexionAgent:
                 f"  匿名后指标不应显著低于以上基线值。"
             )
 
+        # ── 跨运行双层 memory 经验（同领域任务优先） ──
+        mem_str = ""
+        if self.memory:
+            mem_block = self.memory.recall_for_prompt(
+                task_meta=self.task_meta, exclude_dataset=self._memory_exclude)
+            if mem_block:
+                mem_str = f"\n{mem_block}"
+
         reflection_msg = f"""【用户请求】
 {user_request}
 
@@ -1033,6 +1159,7 @@ class ReflexionAgent:
 {_build_context_info(self.ctx)}
 {origin_str}
 {baseline_ds_str}
+{mem_str}
 
 【当前评估指标】
 {_metrics_to_str(current_metrics)}
@@ -1045,10 +1172,17 @@ class ReflexionAgent:
         self.logger.info("向 LLM 请求反思决策...")
 
         def _validate_decision(d):
+            for key in ("new_vc_method", "best_vc_method"):
+                if isinstance(d.get(key), str):
+                    d[key] = canonical_method(d[key])
             if "done" not in d:
                 return "缺少 'done' 字段"
             if not d["done"] and "new_vc_method" not in d:
                 return "done=false 时缺少 'new_vc_method' 字段"
+            if d.get("done") and "best_vc_method" in d:
+                best = d["best_vc_method"]
+                if best not in VC_METHODS:
+                    return f"best_vc_method={best!r} 不是可用方法"
             return None
 
         decision = self._call_llm_with_retry(
@@ -1084,6 +1218,10 @@ class ReflexionAgent:
         print(f"\n用户请求: {user_request}\n")
         print("正在分析请求...", flush=True)
 
+        # ── 任务信息提取（双层 memory：先粗后细召回的前提）──
+        if self.memory:
+            self.task_meta = self._classify_request(user_request)
+
         plan = self._generate_initial_plan(user_request)
         if plan is None:
             self.logger.error("[主循环] 初始计划生成失败，退出")
@@ -1094,13 +1232,14 @@ class ReflexionAgent:
         language = plan.get("language", "中文")
         reasoning = plan.get("reasoning", "")
         steps = plan["steps"]
+        with_mask = any(step["tool"] == "run_mask" for step in steps)
         self.logger.info(f"[Agent]: {reasoning}")
         self.logger.info(f"[计划] steps={[s['tool'] for s in steps]}")
 
         initial_vc = None
         for s in steps:
             if s["tool"] == "run_voice_conversion":
-                initial_vc = s["params"].get("method", "seedvc")
+                initial_vc = s["params"].get("method", "NeuralVC")
                 break
 
         print(f"语言: {language}")
@@ -1150,6 +1289,7 @@ class ReflexionAgent:
 
         # ── 3. Reflexion 循环 ───────────────────────────────────────────────
         history = [{"vc_method": initial_vc, "metrics": current_metrics, "reason": reasoning}]
+        final_decision = None  # LLM 的最终裁决（done=true 的 best_vc_method / 回退分支选择）
 
         for reflection_round in range(max_reflections):
             self.logger.debug(f"[反思循环] 第 {reflection_round + 1}/{max_reflections} 轮")
@@ -1168,6 +1308,7 @@ class ReflexionAgent:
             if decision.get("done", True):
                 reason = decision.get("reason", "")
                 summary = decision.get("summary", "")
+                final_decision = decision
                 print(f"\n✅ 完成: {reason}")
                 if summary:
                     print(f"摘要: {summary}")
@@ -1187,6 +1328,7 @@ class ReflexionAgent:
                         current_metrics = h["metrics"]
                         self.ctx.vc_method_used = new_vc
                         break
+                final_decision = {"best_vc_method": new_vc}
                 reason = decision.get("reason", f"回退到已试过的方法 {new_vc}")
                 print(f"\n✅ 最终选择: {new_vc}（已试过，LLM 认为最优）")
                 print(f"   原因: {reason}")
@@ -1201,7 +1343,7 @@ class ReflexionAgent:
             # ── 跳过：该方法的 evaluate CSV 已存在 ──
             import csv as _csv
             skip_csv = None
-            for _csv_name in [f'evaluate_{new_vc}.csv', f'evaluate_text_{new_vc}.csv']:
+            for _csv_name in [f'evaluate_text_{new_vc}.csv' if with_mask else f'evaluate_{new_vc}.csv']:
                 _csv_path = os.path.join(self.output_dir, _csv_name)
                 if os.path.exists(_csv_path):
                     try:
@@ -1233,8 +1375,8 @@ class ReflexionAgent:
                 continue
 
             print(f"执行: vc({new_vc}) → eval")
-            vc_step = {"tool": "run_voice_conversion", "params": {"method": new_vc, "language": language}}
-            eval_params = {"language": language}
+            vc_step = {"tool": "run_voice_conversion", "params": {"method": new_vc, "language": language, "with_mask": with_mask}}
+            eval_params = {"language": language, "with_mask": with_mask}
             if self.gt_dir:
                 eval_params["gt_dir"] = self.gt_dir
             if self.subject_map_path:
@@ -1280,7 +1422,10 @@ class ReflexionAgent:
             print(f"\n达到最大反思次数 ({max_reflections})，使用最后的结果")
 
         # ── 4. 最终汇总 ─────────────────────────────────────────────────────
-        final_vc = history[-1]["vc_method"] if history else None
+        final_vc = _final_vc_from(final_decision, history)
+        self.ctx.vc_method_used = final_vc
+        current_metrics = next((h["metrics"] for h in reversed(history)
+                                if h["vc_method"] == final_vc), {})
         self.logger.info(f"[最终汇总] 共 {len(history)} 次尝试")
         for i, h in enumerate(history):
             self.logger.info(f"  第{i+1}次: VC={h['vc_method']} | metrics={json.dumps(h.get('metrics', {}), ensure_ascii=False)}")
@@ -1306,12 +1451,36 @@ class ReflexionAgent:
             json.dump(result, f, ensure_ascii=False, indent=2)
         self.logger.info(f"[结果] 已写入: {result_path}")
 
+        # ── 写入跨运行双层 memory（先 Layer-2 run，再 LLM 总结 Layer-1；失败只 warning） ──
+        if self.memory:
+            try:
+                self.memory.record_run(
+                    input_dir=self.input_dir,
+                    language=language,
+                    request=user_request,
+                    output_dir=self.output_dir,
+                    history=history,
+                    final_vc_method=final_vc,
+                    success=bool(result.get("success")),
+                    task_meta=self.task_meta,
+                    baseline_bacc=(baseline_ds or {}).get('downstream_bacc'),
+                    final_metrics=current_metrics,
+                    artifacts={
+                        'agent_result': result_path,
+                        'log': self.logger_file,
+                    },
+                    llm_call=lambda s, u: json.dumps(
+                        self._call_llm_with_retry(s, u, validator=_validate_experience),
+                        ensure_ascii=False),
+                )
+            except Exception as e:
+                self.logger.warning(f"[Memory] record_run 失败（不影响主流程）: {e}")
+
         return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# CLI
-# ═══════════════════════════════════════════════════════════════════════════════
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -1327,7 +1496,7 @@ def main():
     parser.add_argument('--request', '-r', required=True, help='自然语言任务描述')
     parser.add_argument('--llm', default=None, help='模型名称（默认自动推断）')
     parser.add_argument('--open_source', action=argparse.BooleanOptionalAction, default=True,
-                        help='使用本地模型（默认）。--no-open_source 使用 OpenAI 兼容 API（读取环境变量 API_KEY / BASE_URL）')
+                        help='使用本地模型（默认）。--no-open_source 使用 OpenAI 兼容 API（读取环境变量 OPENAI_API_KEY / BASE_URL）')
     parser.add_argument('--output_dir', '-o', default=None, help='输出目录')
     parser.add_argument('--middle_dir', default=None, help='中间结果目录')
     parser.add_argument('--mode', choices=['DEBUG', 'INFO'], default='INFO', help='日志级别')
@@ -1339,6 +1508,14 @@ def main():
                         help='下游任务原始 data.json 路径（启用下游反思路径）')
     parser.add_argument('--downstream_script', type=str, default=None,
                         help='下游任务 bash 脚本路径（与 --downstream_data_json 配对使用）')
+    parser.add_argument('--memory_exclude_dataset', type=str, default=None,
+                        help='recall 时排除该数据集的经验/运行记录（leave-one-out 消融实验用）；'
+                             '注意 record_run 仍会正常写回（写到 --memory_path 指定的目录，'
+                             '实验时建议指向副本目录以免污染主 memory）')
+    parser.add_argument('--memory_path', type=str, default=None,
+                        help='跨运行双层 memory 根目录（默认 ./memory；含 experiences.json 与 runs/）')
+    parser.add_argument('--no_memory', action='store_true',
+                        help='禁用跨运行 memory（行为与无 memory 完全一致）')
     args = parser.parse_args()
 
     if not os.path.isdir(args.input_dir):
@@ -1369,6 +1546,9 @@ def main():
         max_new_tokens=args.max_new_tokens,
         repetition_penalty=args.repetition_penalty,
         open_source=args.open_source,
+        memory_path=args.memory_path,
+        use_memory=not args.no_memory,
+        memory_exclude_dataset=args.memory_exclude_dataset,
     )
     agent.downstream_data_json = args.downstream_data_json
     agent.downstream_script = args.downstream_script

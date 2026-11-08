@@ -1,4 +1,4 @@
-CUDA_VISIBLE_DEVICES=5 python demo/demo.py \
-    --port 7860 \
-    --mode INFO \
-    --llm Qwen3.5-9B
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+python demo/demo.py "$@"

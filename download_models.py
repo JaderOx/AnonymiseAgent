@@ -20,7 +20,7 @@ download_models.py — 一键下载 Anonymise Agent 所需模型到 .env 指定�
 可选类别（--targets）：
   asr        paraformer(+vad+punc+campplus) + FunASRNano(+vad) + FunASRMLTNano(+vad)
   llm        Qwen2.5-32B-Instruct（默认）；加 --gemma 额外下 gemma-3-27b-it
-  age-gender w2v2-L-robust-6-age-gender（fishaudio/seedvc 目标说话人匹配需要）
+  age-gender w2v2-L-robust-6-age-gender（Resyn/NeuralVC 目标说话人匹配需要）
   eval       MOS(UTMOS) + emotion2vec + wavlm-base-plus-sv
   whisperx   faster-whisper large-v3 + pyannote 说话人分离（英文/多语言 ASR）
   vc         Seed-VC + CosyVoice（fish-speech 因版本/来源特殊，仅打印获取说明）

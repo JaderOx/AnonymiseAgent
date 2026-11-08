@@ -8,11 +8,11 @@ voice_convert.py — 统一 VC 接口（薄层调度）
   - CLI
 
 具体 VC 实现位于 utils/voice_convert/，通过注册表统一管理：
-  formant  : STFT 快速共振峰缩放
-  pitch    : 相位声码器变调
-  combined : formant + pitch
-  mcadams  : McAdams OLA-LPC
-  seedvc   : vc大模型（需要整批处理）
+  formant_spec : STFT 快速共振峰缩放（模块 formant.py）
+  pitch        : 相位声码器变调
+  combined     : formant_spec + pitch
+  formant_lpc  : McAdams OLA-LPC（模块 mcadams.py）
+  NeuralVC     : vc大模型（需要整批处理，引擎 seedvc/）
 
 添加新方法（DSP 或神经网络 VC）：
   1. 在 utils/voice_convert/ 新建方法文件
@@ -369,21 +369,22 @@ def batch_convert(input_dir, output_dir, logger,
 
 if __name__ == "__main__":
     import argparse
+    from utils.vc_names import canonical_method
     from utils.logger_example import setup_logger
 
     parser = argparse.ArgumentParser(description="语音转换独立测试")
     parser.add_argument("-i", "--input_dir",   required=True)
     parser.add_argument("-o", "--output_dir",  required=True)
-    parser.add_argument("--method",       choices=list_methods(), default="combined")
+    parser.add_argument("--method",       type=canonical_method, choices=list_methods(), default="combined")
     parser.add_argument("--trans_dir",    default=None,
                         help="转录 JSON 目录（提供则启用分句模式）")
     parser.add_argument("--pad_ms",       type=int,   default=150)
     parser.add_argument("--crossfade_ms", type=int,   default=30)
     parser.add_argument("--workers",      type=int,   default=1)
-    # combined / formant 参数
+    # combined / formant_spec 参数
     parser.add_argument("--formant_scale", type=float, default=1.1)
     parser.add_argument("--pitch_steps",   type=float, default=-3.0)
-    # mcadams 参数
+    # formant_lpc 参数
     parser.add_argument("--alpha",         type=float, default=0.8)
     parser.add_argument("--language",      default=None, help="语言（TTS 方法选参考音用）")
     parser.add_argument("--mask_dir",      default=None, help="隐私词 JSON 目录（提供则 VC 后立刻 mask）")

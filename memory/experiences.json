@@ -1,0 +1,467 @@
+{
+  "version": 2,
+  "updated_at": "2026-10-26T12:28:19",
+  "experiences": [
+    {
+      "exp_id": "ADReSS__dementia",
+      "task_type": "dementia",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "ADReSS",
+      "aliases": [],
+      "downstream_task": "Alzheimer's disease detection using Cookie Theft picture-description task recordings",
+      "language": "English",
+      "n_speakers": 156,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "对 ADReSS 英语 Cookie Theft 图片描述的阿尔茨海默病检测，需同时权衡诊断效用、身份匿名性与语音质量，不能只按下游准确率选方法。本次综合推荐 Resyn（ASR→替换→TTS 重合成）：EER=53.6%，接近匿名理想值50%；bACC=0.754，相比原始基线0.757仅下降0.003；WER=0.025、CER=0.0135、MOS=3.83，均为本次最佳，可在基本维持检测性能的同时获得较好的匿名性、可懂度和自然度。但其韵律变化明显（pit_l1=8.27、pit_pcc=0.045），后续若依赖停顿、语速或音高等声学线索，仍需重新验证，不能据此认定重合成保留了全部疾病特征。若优先考虑检测效用与匿名性而能容忍较低语音质量，NeuralVC 是有力备选：它是非TTS的神经声线转换，bACC=0.811、F1=0.809，EER=51.3%且比Resyn更接近50%，但MOS仅1.88、WER=0.353。pitch属于非重合成的F0信号处理，虽取得最高bACC=0.815、F1=0.815，但EER=31.2%，匿名性明显弱于前两者，不宜仅凭检测分数将其作为强匿名方案。formant_spec属于非重合成的共振峰变换，虽bACC=0.774略高于基线，但EER仅14.8%，身份保护不足；formant_lpc属于非重合成的频谱倾斜调节，bACC降至0.711、EER=36.1%、MOS=1.26，效用和匿名性均缺乏优势，应避免优先采用。用户不要求文本匿名，不能将文本替换本身视为必要收益；本次结论仅支持该数据集和评估配置下的方法取舍，未提供的信息不足以判断性能差异是否具有统计显著性。",
+      "recommended_method": "Resyn",
+      "avoid_methods": [
+        "formant_lpc",
+        "formant_spec"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.757
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "ADReSS_20260930-175301"
+      ],
+      "created_at": "2026-10-26T12:25:43",
+      "updated_at": "2026-10-26T12:25:43",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Crisis__crisis_risk",
+      "task_type": "crisis_risk",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Crisis",
+      "aliases": [],
+      "downstream_task": "心理危机风险检测",
+      "language": "Mandarin Chinese",
+      "n_speakers": null,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "本次普通话心理危机风险检测实验表明，应优先保留下游判别所需的情感和韵律线索，不能仅按可懂度、自然度或信噪比选方法。以任务效用优先、兼顾匿名为目标，首选信号处理方法 pitch（F0变换，非重合成）：BACC为0.759，较原始基线0.765仅下降0.006，F1为所有方法最高的0.738，情感相似度0.954、韵律相关系数0.809；但CER达0.324，且EER为58.5%，距50%有8.5个百分点，匿名效果不如NeuralVC，不能将其视为完全匿名。若更重视身份匿名，可选NeuralVC（神经声线转换，非TTS重合成）：EER为49.5%，最接近50%，BACC为0.738，较基线下降0.027；其韵律相关系数仅0.092，仍需验证对风险线索的影响。formant_lpc是频谱倾斜调节的信号处理方法，BACC为0.765，与基线持平，但EER仅22%，不宜仅因下游性能好就认定匿名有效。应避免优先采用formant_spec：BACC降至0.676，EER为18.7%，效用和匿名均无优势。也应避免将Resyn作为本任务默认方案：它属于ASR→替换→TTS重合成，虽然CER最低为0.031、MOS最高为2.22、SNR最高为52.7 dB，且EER为51.5%，但情感相似度降至0.852、韵律相关系数为-0.007，BACC降至0.633，较基线下降0.132，F1仅0.612。这提示重合成后的清晰自然语音未必保留心理危机检测所需信息。最终使用Resyn只是因为按要求完成全部方法测试，不代表它是最优选择；以上结论限于本次实验，仍需跨划分复验。",
+      "recommended_method": "pitch",
+      "avoid_methods": [
+        "formant_spec",
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.765
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Crisis_20260930-232539"
+      ],
+      "created_at": "2026-10-26T12:25:54",
+      "updated_at": "2026-10-26T12:25:54",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "ENNI__developmental_language_disorder",
+      "task_type": "developmental_language_disorder",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "ENNI",
+      "aliases": [],
+      "downstream_task": "picture-elicited story generation",
+      "language": "English",
+      "n_speakers": 352,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在 ENNI 英语看图叙事相关的儿童语言障碍下游任务中，应优先兼顾语言表现线索保留与说话人匿名效果，而非只追求自然度或转写准确率。首选 pitch：它是非重合成的 F0 信号处理方法，downstream_bacc=0.831，为全部匿名方法最高，相比原始基线0.849仅下降1.8个百分点，F1=0.816也最高；EER=46.7%，接近50%，匿名效果较强。但其WER=0.287、MOS=1.25，说明任务性能保留不代表可懂度和自然度最佳。formant_lpc与formant_spec分别是非重合成的频谱倾斜调节和共振峰变换，bacc分别为0.824和0.822，但EER仅22.9%和25.6%，身份保护明显弱于pitch，不适合作为高匿名要求下的首选。NeuralVC属于神经声线转换而非TTS重合成，EER=48.9%，但bacc降至0.810、F1=0.765，且韵律相关系数仅0.134，本次在任务效用上不如pitch。Resyn采用ASR→替换→TTS完全重合成，虽然EER=50%、MOS=4.28、WER=0.113均表现突出，但bacc仅0.754，较基线下降9.5个百分点，F1=0.738，为本次最差，且韵律相关系数为-0.012。这提示重合成可能改变该类任务依赖的原始表达与韵律线索；无需文本匿名且重视下游识别性能时应避免优先使用。最终运行方法为Resyn只是因为需要遍历全部方法，并不代表它是最佳选择。上述结论限于本次实验，尚不能据此断言性能差异具有统计显著性。",
+      "recommended_method": "pitch",
+      "avoid_methods": [
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.849
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "ENNI_20260930-233324"
+      ],
+      "created_at": "2026-10-26T12:26:06",
+      "updated_at": "2026-10-26T12:26:06",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Ivanova__dementia",
+      "task_type": "dementia",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Ivanova",
+      "aliases": [],
+      "downstream_task": "cognitive assessment",
+      "language": "Spanish",
+      "n_speakers": 357,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在本次 Ivanova 西班牙语认知评估实验中，应优先按认知任务效用选择匿名方法，而非仅按自然度或可懂度选择。首选信号处理方法 formant_lpc（频谱倾斜调节，非重合成）：其 downstream_bacc=0.503，高于原始基线0.448，提升0.055，且 downstream_f1=0.476 为五种方法最高；EER=40%，具备一定匿名效果，但弱于更接近50%的 NeuralVC 和 Resyn。其代价是自然度较低（MOS=1.25）、WER=0.336，适合更看重认知评估效用而非听感的场景。formant_spec 为非重合成的共振峰变换，韵律保持较好（pit_l1=1.61、pit_pcc=0.822），但 bacc=0.421，仍低于基线，不能仅凭韵律保持较好就认定其适合该任务。应避免将 pitch 或 Resyn 作为本任务默认方案：pitch 是非重合成的F0变换，bacc=0.396，较基线下降0.052，且EER=36.7%，为本次匿名效果最弱的方法；Resyn 是 ASR→替换→TTS 重合成，虽EER=45%最接近50%、MOS=3.22最高、WER=0.099最低，但 bacc同样降至0.396，且pit_pcc=0.036，提示重新生成语音可能损失认知评估所需的韵律线索。NeuralVC 是神经声线转换而非TTS重合成，本次EER=43.3%，但bacc=0.399、pit_l1=6.88、pit_pcc=0.148，也不宜作为效用优先时的默认选择。最终采用Resyn只是完成遍历后的运行结果，并不代表它在下游任务上最优。上述结论仅适用于本次实验，尚需重复验证；未提供p_value的检验定义，不能据此宣称方法间差异显著。用户不需要文本匿名，后续不应为文本替换而优先引入重合成链路。",
+      "recommended_method": "formant_lpc",
+      "avoid_methods": [
+        "pitch",
+        "NeuralVC",
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.448
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Ivanova_20260930-234331"
+      ],
+      "created_at": "2026-10-26T12:26:16",
+      "updated_at": "2026-10-26T12:26:16",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "MODMA__depression",
+      "task_type": "depression",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "MODMA",
+      "aliases": [],
+      "downstream_task": "clinical speech dataset for depression detection",
+      "language": "Mandarin Chinese",
+      "n_speakers": 52,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "对普通话临床语音抑郁检测，本次实验在下游效用优先、兼顾匿名化与可懂度时首选 Resyn。它属于 ASR→替换→TTS 重合成，downstream_bacc=0.842，相对原始基线0.782提高6.0个百分点，F1=0.833；同时CER=0.040、MOS=3.23，均为本次最优。但其EER=33.5%，距离理想匿名值50%仍有16.5个百分点，不能视为充分匿名；pit_pcc=0.070也提示原始韵律相关性大幅下降，因此分类表现提升不等于临床声学线索被完整保留。若更重视身份隐藏，可考虑神经声线转换 NeuralVC（非TTS重合成）：其EER=44.5%，最接近50%，但BACC=0.773，较基线低0.9个百分点，CER=0.170、MOS=2.00，存在效用和可懂度代价。信号处理方法 pitch 为不重合成的F0变换，EER=56.7%，距50%为6.7个百分点，匿名效果接近NeuralVC；BACC=0.787基本维持基线，但CER=0.204、MOS=1.27，可懂度与自然度较差。formant_lpc是非重合成的频谱倾斜调节，formant_spec是非重合成的共振峰变换；二者虽有BACC=0.807和0.795，情感与韵律相关性也较高，但EER仅13.9%和16.3%，身份保护明显不足，不宜作为需要有效匿名化时的单独方案。EER应按接近50%的程度判断，不能越低越好，也不能简单越高越好。上述选择仅由本次MODMA结果支持，尚不能据此断言跨数据集有效或提升具有统计显著性；用户不要求文本匿名，后续应明确Resyn的文本替换策略，避免无必要地改变抑郁相关语义内容。",
+      "recommended_method": "Resyn",
+      "avoid_methods": [
+        "formant_lpc",
+        "formant_spec"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.782
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "MODMA_20260930-235206"
+      ],
+      "created_at": "2026-10-26T12:26:26",
+      "updated_at": "2026-10-26T12:26:26",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "NCMMSC-AD__dementia",
+      "task_type": "dementia",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "NCMMSC-AD",
+      "aliases": [],
+      "downstream_task": "cognitive assessment",
+      "language": "Mandarin Chinese",
+      "n_speakers": 175,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "中文认知障碍评估应兼顾身份匿名与认知相关语音线索保留，不能仅按可懂度或自然度选方法。综合本次结果，优先考虑 NeuralVC（神经声线转换，非 TTS 重合成）：EER=46.7%，接近匿名理想值50%，下游BACC=0.696，较原始基线0.709下降0.013，F1=0.696，在具有较强匿名效果的方法中下游表现最好；但CER=0.365、韵律相关系数仅0.128，仍需验证内容和韵律损失。pitch 属于不重合成的F0信号处理，可作为备选：BACC=0.695、韵律相关系数0.783，但CER=0.404，且EER=57.6%距50%为7.6个百分点，匿名效果不如NeuralVC，不能将超过50%解释为更好。formant_spec（不重合成的共振峰变换）下游保留最佳，BACC=0.720、F1=0.722，韵律相关系数0.832；formant_lpc（不重合成的频谱倾斜调节）BACC=0.718，但两者EER分别仅19%和14.7%，不能因下游指标较好就作为强匿名首选。Resyn 是ASR→替换→TTS重合成，虽EER=47.9%最接近50%、CER=0.048最低、MOS=2.58最高，下游BACC却降至0.687，较基线下降0.022，F1=0.671也是本次最低，韵律相关系数仅0.012，提示重合成可能损失认知评估所需的原始语音线索。用户不需要文本匿名，不宜仅为低CER和较高MOS优先采用Resyn。最终使用Resyn只是遍历全部方法后的最后一次尝试，不代表它是最优方法。以上结论限于本次数据与评估配置，下游小幅差异仍需重复实验确认。",
+      "recommended_method": "NeuralVC",
+      "avoid_methods": [
+        "Resyn",
+        "formant_lpc",
+        "formant_spec"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.709
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "NCMMSC-AD_20261001-000438"
+      ],
+      "created_at": "2026-10-26T12:26:38",
+      "updated_at": "2026-10-26T12:26:38",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "NeuroVoz__parkinson",
+      "task_type": "parkinson",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "NeuroVoz",
+      "aliases": [],
+      "downstream_task": "Parkinson's disease detection",
+      "language": "Spanish",
+      "n_speakers": 112,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "对西班牙语 NeuroVoz 帕金森病检测，应联合评估说话人匿名效果与病理检测效用，不能仅按音质、自然度或可懂度选择方法。本次优先推荐 NeuralVC（神经声线转换，非 TTS 重合成）：EER为48.1%，接近匿名理想值50%，同时下游平衡准确率为0.843、F1为0.842，相比原始平衡准确率0.862仅下降0.019，是本次匿名与检测效用的最佳折中。若更看重检测性能且可接受较弱的身份保护，可选 formant_lpc（信号处理中的频谱倾斜调节，不重合成）：平衡准确率0.850、F1为0.850，是本次匿名方法中最高，但EER仅27.1%，身份保护明显弱于 NeuralVC。formant_spec（信号处理中的共振峰变换，不重合成）的平衡准确率为0.841、EER为22.6%，不适合强匿名需求；pitch（信号处理中的F0变换，不重合成）的平衡准确率为0.834、EER为43.5%，本次匿名效果与检测效用均不及 NeuralVC。应避免在本任务中直接采用 Resyn（ASR→替换→TTS重合成，语音完全重新生成）：虽然EER为48.6%、MOS为3.58、SNR为38.2 dB，但平衡准确率降至0.515、F1降至0.398，相比原始平衡准确率下降0.347，检测表现接近随机；相对 NeuralVC，其匿名收益很小，却损失大量任务效用。Resyn 的韵律相关系数为0.182、韵律L1距离为9.72，提示重合成可能改变病理相关声学线索，但不能据此单独证明机制；NeuralVC 的韵律相关系数也仅0.315，却仍保留较高检测性能，因此不能仅凭韵律指标筛选方法。用户不需要文本匿名，不应为文本替换额外承担完整重合成的任务效用风险。本次最终运行 Resyn 只是遍历全部五种方法的最后一步，不代表推荐选择。以上结论限于本次数据与配置，迁移到其他帕金森病语音数据或配置时，应重新联合验证匿名效果与下游检测性能。",
+      "recommended_method": "NeuralVC",
+      "avoid_methods": [
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.862
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "NeuroVoz_20261001-001400",
+        "NeuroVoz_20261001-121507",
+        "NeuroVoz_20261001-140555"
+      ],
+      "created_at": "2026-10-26T12:26:49",
+      "updated_at": "2026-10-26T12:28:19",
+      "n_runs": 3
+    },
+    {
+      "exp_id": "PUMCH__articulation_disorder",
+      "task_type": "articulation_disorder",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "PUMCH",
+      "aliases": [],
+      "downstream_task": "cleft-palate speech assessment",
+      "language": "Mandarin Chinese",
+      "n_speakers": 244,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在本次PUMCH普通话腭裂言语评估中，应优先保留病理性构音声学线索，而不能仅按可懂度、自然度或匿名强度选方法。以保留下游性能为优先目标时，首选信号处理方法formant_lpc（频谱倾斜调节，非重合成）：其BACC为0.691，相对原始基线0.699仅下降0.8个百分点，F1为0.681，均为本次匿名方法中最佳；但EER为21.4%，距50%仍较远，匿名保护有限。formant_spec属于非重合成的共振峰变换，BACC降至0.648，EER仅11.9%，在下游性能和匿名效果上均不如formant_lpc，不宜优先选择。pitch属于非重合成的F0变换，EER为34.9%，匿名效果更强，但BACC为0.644，需接受明显的任务性能损失。NeuralVC是神经声线转换而非TTS重合成，其EER为48.8%，最接近50%，是本次匿名效果最好的方法；但BACC为0.641、CER为0.241，适合作为更强调匿名强度时的备选，而非下游性能最优方案。应避免直接采用Resyn这类ASR→替换→TTS重合成用于该任务：虽然其CER最低（0.045）、MOS最高（2.49），EER也达到44%，但BACC仅0.526，比基线下降17.3个百分点，F1仅0.515，韵律相关系数仅0.004，提示重新生成语音可能丢失诊断所依赖的病理性声学线索。用户不需要文本匿名，不能以内容可懂或听感更自然替代临床任务保真度验证。本次最终使用Resyn只是遍历全部方法后的最后一次尝试，不代表其最优；后续同类任务应先评估formant_lpc，再按明确的匿名强度要求权衡pitch或NeuralVC。",
+      "recommended_method": "formant_lpc",
+      "avoid_methods": [
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.699
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "PUMCH_20261001-002349"
+      ],
+      "created_at": "2026-10-26T12:27:01",
+      "updated_at": "2026-10-26T12:27:01",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Saar-HD__voice_pathology",
+      "task_type": "voice_pathology",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Saar-HD",
+      "aliases": [],
+      "downstream_task": "pathological-voice detection / voice-disorder classification",
+      "language": "German",
+      "n_speakers": 424,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在 Saar-HD 德语病理嗓音检测/嗓音障碍分类任务中，应优先保护与病变相关的发声及韵律线索，不能用可懂度、自然度或信噪比替代下游效用评估。以任务性能保留为首要目标时，首选信号处理方法 formant_spec（共振峰变换，非重合成）：其 BACC=0.693、F1=0.691，在全部匿名方法中最高，相比原始基线 BACC=0.715 仅下降0.022，且 pit_pcc=0.96、pit_l1=0.704；但 EER=24.2%，距离50%较远，匿名保护有限。formant_lpc 是频谱倾斜调节信号处理方法，BACC=0.673、EER=25.8%，本次没有显示出优于 formant_spec 的效用或明显隐私收益。若要求更强匿名保护，F0 变换信号处理方法 pitch 可作为折中：EER=42.2%，比两种共振峰相关方法更接近50%，BACC=0.665，但 MOS=1.55，音质代价明显。NeuralVC 是神经声线转换而非 TTS 重合成，其 EER=51%，在本次结果中最接近50%，匿名效果最好，同时 BACC=0.656、F1=0.650；因此可在更重视隐私、能够接受任务性能下降时考虑，但其 pit_pcc=0.443 提示韵律结构保留不足。应避免将 Resyn 的 ASR→替换→TTS 重合成用于需要保留病理发声线索的该类任务：虽然 EER=51.7% 接近50%，MOS=3.2、SNR=48.4 dB，且 WER=0.015，但 BACC 降至0.488、F1=0.402，相比基线下降0.227，pit_pcc 仅0.068，提示完全重新生成语音可能抹除任务所需线索。最终执行 Resyn 只是遍历全部方法的结果，不代表它是最佳方案；用户不需要文本匿名时，更不应仅为重生成语音而承担这种效用损失。以上选择依据本次数据，迁移到其他病理嗓音数据时仍需联合验证下游性能和匿名效果。",
+      "recommended_method": "formant_spec",
+      "avoid_methods": [
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.715
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Saar-HD_20261001-003156"
+      ],
+      "created_at": "2026-10-26T12:27:16",
+      "updated_at": "2026-10-26T12:27:16",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Saar-Lary__voice_pathology",
+      "task_type": "voice_pathology",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Saar-Lary",
+      "aliases": [],
+      "downstream_task": "pathological-voice detection",
+      "language": "German",
+      "n_speakers": 280,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在 Saar-Lary 德语病理嗓音检测中，应优先采用不重合成的 pitch（信号处理、F0变换）：其下游 bacc=0.814、F1=0.813，bacc较原始基线0.807高0.007，且匿名指标EER=43.8%，接近50%，在本次实验中实现了最佳任务效用与匿名性折中；但MOS仅1.53，自然度是明显短板，不能据此宣称其检测性能显著提升。formant_spec（信号处理、共振峰变换）可作为偏重任务保真的备选，bacc=0.789、韵律相关系数0.960，但EER仅22.1%，匿名效果明显弱于pitch；formant_lpc（信号处理、频谱倾斜调节）的bacc=0.771、EER=22.4%，也未体现优于pitch的效用或匿名性优势。NeuralVC属于神经声线转换而非TTS重合成，EER=46.0%更接近50%，但bacc降至0.739，较基线下降0.068，韵律相关系数降至0.463，不宜作为该任务的默认方案。应避免Resyn这类ASR→替换→TTS重合成：虽然EER=52.6%距50%仅2.6个百分点，且MOS=3.24、SNR=48.2 dB、WER=0.016，但bacc降至0.489、F1=0.465，韵律相关系数仅0.057，提示重新生成语音可能破坏病理发声检测所依赖的声学线索。用户不需要文本匿名，因此不应为较好的可懂度、自然度或匿名指标而牺牲病理信息。本次最终方法Resyn只是全方法遍历的最后一次尝试，并非最优推荐；后续同类任务应以检测效用和接近50%的EER共同筛选，并单独检查自然度。",
+      "recommended_method": "pitch",
+      "avoid_methods": [
+        "Resyn",
+        "NeuralVC"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.807
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Saar-Lary_20261001-004124"
+      ],
+      "created_at": "2026-10-26T12:27:25",
+      "updated_at": "2026-10-26T12:27:25",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Saar-Reku__voice_pathology",
+      "task_type": "voice_pathology",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Saar-Reku",
+      "aliases": [],
+      "downstream_task": "pathological-voice detection",
+      "language": "German",
+      "n_speakers": 424,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "本次德语 Saar-Reku 实验表明，病理嗓音检测应优先保留发声病变相关声学线索，不能仅凭匿名性、可懂度或自然度选方法。若以下游性能保持为首要目标，推荐信号处理方法 formant_lpc（频谱倾斜调节，非重合成）：BACC 为0.894，相比原始基线0.901仅下降0.007，F1为0.894，是五种方法中最好的；但EER为23.4%，距离50%仍较远，匿名保护有限。formant_spec（共振峰变换，非重合成）的BACC为0.877、EER为20%，本次在任务保持和匿名性上均不及formant_lpc。若需增强匿名保护，可考虑pitch（F0变换，非重合成）：EER提高到39.7%，BACC仍为0.870，但MOS仅1.52，需接受自然度损失。NeuralVC是神经声线转换而非TTS重合成，其EER达到50%，匿名效果最好，但BACC降至0.830，比基线低0.071，适合作为强匿名要求下需验证任务损失的备选。应避免将Resyn用于需要保留病理嗓音检测能力的场景：该方法通过ASR→替换→TTS完全重新生成语音，虽然EER为49.3%、WER仅0.005、MOS为3.22，BACC却降至0.473、F1降至0.450，且韵律相关系数仅0.017，说明内容清晰和音质提升不能保证病理声学信息保留。用户不需要文本匿名，不能为文本处理或重合成质量牺牲检测线索。本次最终使用Resyn只是跑完全部方法的顺序结果，不代表最优选择；上述建议仍需在其他数据和匿名攻击设置下验证。",
+      "recommended_method": "formant_lpc",
+      "avoid_methods": [
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.901
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Saar-Reku_20261001-005007"
+      ],
+      "created_at": "2026-10-26T12:27:35",
+      "updated_at": "2026-10-26T12:27:35",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Suicide-YF__crisis_risk",
+      "task_type": "crisis_risk",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Suicide-YF",
+      "aliases": [],
+      "downstream_task": "suicidal thoughts or behaviours detection",
+      "language": "Mandarin Chinese",
+      "n_speakers": 1223,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在本次普通话自杀想法或行为检测实验中，兼顾下游效用与说话人匿名化，优先推荐 Resyn（ASR→替换→TTS 重合成）。其 downstream_bacc=0.663，较原始基线0.668仅下降0.005，F1=0.662；CER=0.020、MOS=2.93，均为本次最优，EER=41.2%也较接近匿名理想值50%。用户不需要文本匿名，部署时应保留原始文本内容，避免无关文本替换影响危机风险线索。Resyn 的韵律相关系数仅0.013，但本次下游表现仍最好，说明不能仅凭韵律保真度筛选方法；该结果也不能证明韵律对这类任务不重要。神经声线转换 NeuralVC（非TTS重合成）的EER=46.7%，比Resyn更接近50%，但BACC降至0.629、CER升至0.336，适合更重视身份匿名而能接受效用损失的场景，不宜作为本任务默认选择。信号处理方法 pitch（F0变换，非重合成）的EER=52.3%，距50%仅2.3个百分点，匿名效果最接近理想，但BACC=0.604、F1=0.600、CER=0.365，下游效用和可懂度损失最大，应避免用于要求保留检测性能的场景。formant_spec（共振峰变换，非重合成）和formant_lpc（频谱倾斜调节，非重合成）的BACC分别为0.645和0.641，情感相似度分别为0.953和0.946，但EER仅23%和18%，明显偏离50%，身份保护较弱；在确实需要说话人匿名化时不宜作为默认方案。以上结论来自单个数据集的一次方法比较，推广到其他心理危机语音数据时应重新验证下游效用与匿名效果。",
+      "recommended_method": "Resyn",
+      "avoid_methods": [
+        "pitch",
+        "formant_lpc",
+        "formant_spec"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.668
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Suicide-YF_20261001-005920"
+      ],
+      "created_at": "2026-10-26T12:27:44",
+      "updated_at": "2026-10-26T12:27:44",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Androids-Corpus-I__depression",
+      "task_type": "depression",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Androids-Corpus-I",
+      "aliases": [],
+      "downstream_task": "区分健康对照组(HC)与抑郁症相关障碍患者(PT)",
+      "language": "Italian",
+      "n_speakers": 118,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在本次 Italian Androids-Corpus-I 的健康对照与抑郁相关障碍分类实验中，若以平衡准确率兼顾匿名效果为主要目标，优先考虑 Resyn（ASR→替换→TTS 重合成）：其 BACC 为0.896，较原始基线0.853提高4.3个百分点，EER为43.1%，接近50%，且WER为0.021、CER为0.012，可懂度在所测方法中最好，MOS为2.44也最高。但其F1仅0.728，低于其他所测方法，因此不能据BACC认定分类性能全面提升；韵律相关系数为-0.005、韵律L1距离为7.58，也说明原始韵律保留较差，后续应复核分类阈值、混淆矩阵及跨划分稳定性，不能将该结果推广为重合成必然保留抑郁声学线索。若更重视保持原始任务表现和情感相似度，信号处理方法pitch（F0变换，非重合成）是备选：BACC为0.852，基本持平基线，F1为0.845，情感相似度为0.962，但EER为31.9%，匿名效果弱于Resyn。NeuralVC属于神经声线转换而非TTS重合成，其EER为48.3%，最接近50%，匿名效果最强，但BACC降至0.774，较基线下降7.9个百分点，WER升至0.258，不宜作为该分类任务的默认选择。信号处理方法formant_spec（共振峰变换，非重合成）的BACC为0.825、EER仅17.7%，兼顾任务效用与匿名性时不推荐；formant_lpc（频谱倾斜调节，非重合成）的EER为36.2%，但BACC降至0.800，虽韵律相关系数0.759较高，也不宜优先使用。以上为单次数据集实验的任务级选型经验；用户不要求文本匿名，不应把文本替换视为必要目标，采用Resyn时需核验是否改变诊断相关语义。",
+      "recommended_method": "Resyn",
+      "avoid_methods": [
+        "NeuralVC",
+        "formant_spec"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.853
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Androids-Corpus-I_20261001-010954"
+      ],
+      "created_at": "2026-10-26T12:27:55",
+      "updated_at": "2026-10-26T12:27:55",
+      "n_runs": 1
+    },
+    {
+      "exp_id": "Androids-Corpus-R__depression",
+      "task_type": "depression",
+      "task_type_source": "llm",
+      "evidence_level": null,
+      "dataset": "Androids-Corpus-R",
+      "aliases": [],
+      "downstream_task": "区分健康对照组(HC)与抑郁症相关障碍患者(PT)",
+      "language": "Italian",
+      "n_speakers": 118,
+      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+      "lesson": "在本次意大利语HC与抑郁症相关障碍患者分类实验中，兼顾身份匿名与下游性能时优先选择NeuralVC。它属于神经声线转换，非TTS重合成：EER为50.9%，距匿名理想值50%仅0.9个百分点；BACC为0.724，较原始基线0.699提高0.025，F1为0.715。但其韵律保真较差（pit_l1=9.83、pit_pcc=0.052），自然度也有限（MOS=1.81），不能据此认为所有临床声学线索均被保留。信号处理方法formant_spec采用共振峰变换、不重合成，下游表现最好（BACC=0.745、F1=0.737），但EER仅23.2%，身份保护明显弱于NeuralVC，因此只适合作为更偏重分类性能、能接受较弱匿名性的备选。formant_lpc为非重合成的频谱倾斜调节，BACC=0.675、EER=35.3%；pitch为非重合成的F0变换，BACC=0.640、EER=33%，二者本次均未优于NeuralVC的匿名与分类性能组合，不宜优先采用。应避免将Resyn这类ASR→替换→TTS完全重合成作为本任务的默认方案：虽然其EER=46%、WER=0.01、情感相似度=0.94，但BACC降至0.516、F1降至0.450，说明可懂度及整体情感相似度高并不保证抑郁分类线索得到保留。用户无需文本匿名，本次结果也未显示引入TTS重合成的任务收益。以上为单数据集实验经验，性能提升是否稳定仍需重复评估，不能仅凭本次分数认定具有统计显著性。",
+      "recommended_method": "NeuralVC",
+      "avoid_methods": [
+        "Resyn"
+      ],
+      "key_metrics": {
+        "baseline_bacc": 0.699
+      },
+      "paths": {
+        "evaluate_dir": null,
+        "downstream_summary": null,
+        "baseline_results_txt": null,
+        "audio_dir": null
+      },
+      "run_ids": [
+        "Androids-Corpus-R_20261001-011835"
+      ],
+      "created_at": "2026-10-26T12:28:04",
+      "updated_at": "2026-10-26T12:28:04",
+      "n_runs": 1
+    }
+  ]
+}

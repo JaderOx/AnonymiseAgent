@@ -39,7 +39,7 @@ _DEFAULT_TARGET_POOL = str(
     Path(__file__).resolve().parent / 'aishell' / 'aishell_target_speaker.json'
 )
 
-DESCRIPTION = "SeedVC v2 神经网络声线转换（按说话人匹配年龄/性别目标音色，需 GPU）"
+DESCRIPTION = "NeuralVC（SeedVC v2 引擎）神经声线转换（按说话人匹配年龄/性别目标音色，需 GPU）"
 DEFAULTS = {
     "aishell_target_pool_path": _DEFAULT_TARGET_POOL,
     "age_gender_model_path":    _DEFAULT_AGE_GENDER_MODEL,
@@ -518,9 +518,9 @@ def batch_convert_fn(input_dir: str, output_dir: str, logger,
     # if not trans_dir or not os.path.isdir(trans_dir):
     #     raise ValueError("seedvc 需要有效的 trans_dir（含 speaker 字段的转录 JSON）")
     if not aishell_target_pool_path or not os.path.exists(aishell_target_pool_path):
-        raise ValueError(f"seedvc 需要有效的 aishell_target_pool_path: {aishell_target_pool_path}")
+        raise ValueError(f"NeuralVC 需要有效的 aishell_target_pool_path: {aishell_target_pool_path}")
     if not age_gender_model_path or not os.path.isdir(age_gender_model_path):
-        raise ValueError(f"seedvc 需要有效的 age_gender_model_path: {age_gender_model_path}")
+        raise ValueError(f"NeuralVC 需要有效的 age_gender_model_path: {age_gender_model_path}")
 
     os.makedirs(output_dir, exist_ok=True)
 
