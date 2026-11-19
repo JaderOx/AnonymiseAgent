@@ -18,6 +18,8 @@ CASA 接收自然语言需求，自动规划步骤、执行、读取评估/下�
 
 ## 环境准备
 
+我们的运行环境为 **Ubuntu 22.04、CUDA 12.8**。完整运行全流程至少需要 **1 张 NVIDIA A800 显卡或 3 张 NVIDIA RTX 4090 显卡**。
+
 在仓库根目录执行以下命令。CASA 使用 `Agent` 主环境，WhisperX 转录使用 `whisperx` 环境，Resyn 重合成使用 `fishaudio` 环境。
 
 ```bash
@@ -53,9 +55,9 @@ cp .env.example .env
 | 年龄/性别（asr的meta标注、tts 目标说话人匹配） | `$TORCH_HOME/`（默认 `./models`） | `w2v2-L-robust-6-age-gender` |
 | ASR / 评估模型 | 自动下载 | Paraformer / WhisperX / UTMOS / emotion2vec / wavlm-base-plus-sv |
 
-NeuralVC 从 `utils/voice_convert/aishell/aishell_target_speaker.json` 选取参考说话人。使用 NeuralVC 前，将其中的 `wav_path` 改为对应 AISHELL 音频的本地路径。也可通过 `NEURALVC_TARGET_POOL` 指定单独的 JSON 文件，NeuralVC 在加载模型前会检查参考音频是否存在。
+当前 NeuralVC（Seed-VC）使用 AISHELL 中的录音作为参考音频。请先下载 AISHELL，再将 `utils/voice_convert/aishell/aishell_target_speaker.json` 中的 `wav_path` 改为对应录音的本地路径，然后运行 NeuralVC。也可通过 `NEURALVC_TARGET_POOL` 指定单独的 JSON 文件，NeuralVC 在加载模型前会检查参考音频是否存在。
 
-> 硬件：建议 ≥3 张 NVIDIA RTX 4090；3 张时 `--group_num` 建议 < 30。
+> 使用 3 张 NVIDIA RTX 4090 时，`--group_num` 建议 < 30。
 
 ---
 
@@ -168,7 +170,6 @@ demo/      # Gradio Demo
 
 ---
 
-
 ## 测试
 
 ```bash
@@ -177,5 +178,27 @@ python -m pytest tests -q
 
 覆盖记忆持久化与召回、匿名参数、最终选择、语言处理和 Demo 接入。测试模拟模型及评估调用；完整推理仍需准备上述环境和模型。
 
+## 示例
+
+`examples/audio/` 中的模拟录音由改写的《伊索寓言》文本通过 TTS 合成。前 10 条录音在开头包含人名和地名信息，用于演示内容匿名化。
+
+准备好上述环境和模型后，在仓库根目录直接运行：
+
+```bash
+bash examples/run.sh
+```
+
+在本次示例录音的运行中，Agent 使用的方法为 **Resyn**。在**单张 NVIDIA A800 显卡**上，平均每条录音的处理耗时为：**转录 2.7s**、**mask 4.5s**、**TTS 17s**。
+
+
 ## 引用
-TODO
+
+```bibtex
+@article{cui2026task,
+  title={Task-adaptive anonymisation enables privacy-preserving sharing of clinical speech data},
+  author={Cui, Ziyun and Niu, Haoyu and Wu, Wen and Sun, Hao and Zhang, Sihan and Lei, Chang and Zhang, Yun and Sun, Chunyun and Luo, Yang and Cao, Liangliang and others},
+  journal={arXiv preprint arXiv:2611.11273},
+  year={2026}
+}
+```
+

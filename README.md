@@ -18,6 +18,8 @@ CASA takes natural-language requirements, automatically plans the steps, execute
 
 ## Environment Setup
 
+Our runtime environment is **Ubuntu 22.04 with CUDA 12.8**. Running the complete pipeline requires at least **one NVIDIA A800 GPU or three NVIDIA RTX 4090 GPUs**.
+
 Run the following commands from the repository root. CASA runs in `agent`, uses `whisperx` for WhisperX transcription, and uses `fishaudio` for Resyn synthesis.
 
 ```bash
@@ -53,7 +55,7 @@ Fill in the model directories and token in `.env`. The commands use the default 
 | Age/gender (ASR meta annotation, TTS target-speaker matching) | `$TORCH_HOME/` (default `./models`) | `w2v2-L-robust-6-age-gender` |
 | ASR / evaluation models | auto-downloaded | Paraformer / WhisperX / UTMOS / emotion2vec / wavlm-base-plus-sv |
 
-NeuralVC selects reference speakers from `utils/voice_convert/aishell/aishell_target_speaker.json`. Set its `wav_path` entries to the corresponding local AISHELL files before running NeuralVC. You can set `NEURALVC_TARGET_POOL` to use a separate JSON file. Its reference audio is checked before NeuralVC loads its models.
+Our current NeuralVC (Seed-VC) setup uses recordings from AISHELL as reference audio. Download AISHELL, then update the `wav_path` entries in `utils/voice_convert/aishell/aishell_target_speaker.json` to point to the corresponding local recordings before running NeuralVC. You can set `NEURALVC_TARGET_POOL` to use a separate JSON file. Its reference audio is checked before NeuralVC loads its models.
 
 ---
 
@@ -166,7 +168,6 @@ demo/      # Gradio Demo
 
 ---
 
-
 ## Tests
 
 ```bash
@@ -174,6 +175,20 @@ python -m pytest tests -q
 ```
 
 Covers memory persistence and recall, VC parameters, final selection, language handling and demo integration. Model and evaluation calls are simulated in tests; full inference requires the environments and models above.
+
+
+## Examples
+
+The simulated recordings in `examples/audio/` were synthesized using text-to-speech (TTS) from adapted Aesop's fables. The first 10 recordings include personal names and place names at the beginning to demonstrate content anonymization.
+
+After preparing the environments and models above, run the example from the repository root:
+
+```bash
+bash examples/run.sh
+```
+
+In our run on the example recordings, the Agent used **Resyn**. On a **single NVIDIA A800 GPU**, the average processing time per recording was **2.7s for transcription**, **4.5s for masking**, and **17s for TTS**.
+
 
 ## Citation
 
