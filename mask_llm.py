@@ -60,7 +60,7 @@ def mask_llm(
 
     from pathlib import Path as _Path
     _trans_dir_p = _Path(trans_dir)
-    trans_files = sorted(_trans_dir_p.rglob('*.json'))
+    trans_files = sorted(p for p in _trans_dir_p.rglob('*.json') if p.name != 'args.json')
     all_len = len(trans_files)
     if all_len == 0:
         logger.warning(f"在目录 {trans_dir} 中未找到合法的转录文本文件（*.json）")
@@ -102,23 +102,20 @@ def mask_llm(
 
                 logger.debug(f"处理{idx_g+1}/{num_group}: 第{start_sentence_idx+1}句~第{end_sentence_idx}句")
 
-                # 将json文件文本整合
-                text = group_prefix
-                for i in range(start_sentence_idx, end_sentence_idx):
-                    sentence = trans[i]
-                    text += sentence["text"]
-                logger.debug(f"输入LLM的文本: \n{text}\n")
-
-                res = generate_response(model, tokenizer, prompt=full_prompt + text)
-
-                logger.debug(f"LLM输出: \n{res}")
-
-                final_result = extract_result_from_response(res)
-                logger.debug(f"提取结果: \n{final_result}")
-
-                # 把res转为json格式:
-                res = text2list(final_result)
-                logger.debug(f"处理结果: \n{res}")
+                text = "\n".join([group_prefix, *(sentence["text"] for sentence in trans[start_sentence_idx:end_sentence_idx])])
+                prompt_text = f"{full_prompt}\n{text}"
+                response = generate_response(model, tokenizer, prompt=prompt_text)
+                final_result = extract_result_from_response(response)
+                if not final_result:
+                    response = generate_response(
+                        model, tokenizer,
+                        prompt=prompt_text + "\nReturn exactly one nonempty <result>...</result> block. If no identifiers are present, use <result>None</result>.",
+                        temperature=0,
+                    )
+                    final_result = extract_result_from_response(response)
+                if not final_result:
+                    raise ValueError(f"Missing a valid <result> block in transcript group {idx_g + 1}")
+                res = list(dict.fromkeys(text2list(final_result)))
 
                 # 循环处理每个隐私词
                 for word in res:
@@ -129,7 +126,7 @@ def mask_llm(
 
                         # 使用正则表达式查找所有匹配位置
                         pattern = re.escape(word)  # 转义特殊字符
-                        matches = [(m.start(), m.end()) for m in re.finditer(pattern, sentence["text"])]
+                        matches = [(m.start(), m.end()) for m in re.finditer(pattern, sentence["text"], flags=re.IGNORECASE)]
                         
                         if matches:  # 在当前句找到了
                             logger.debug(f"在句子 '{idx}' : '{sentence['text']}'找到隐私词 '{word}', 位置信息：'{matches}'")
@@ -142,18 +139,11 @@ def mask_llm(
                                     "sentence": sentence["text"],
                                     "start": start,
                                     "end": end,
-                                    "text": word
+                                    "text": sentence["text"][start_idx:end_idx]
                                 })
                             found_in_context = True
-                    # 如果没找到
                     if not found_in_context:
-                        mask_save.append({
-                            "idx": idx,
-                            "sentence": sentence["text"],
-                            "start": 0,
-                            "end": 0,
-                            "text": f"识别到隐私词'{word}'但原文并没有"
-                        })
+                        logger.warning("Detected an identifier that could not be matched in transcript group %d", idx_g + 1)
             if not mask_save:
                 mask_save.append({
                         "idx": -1,

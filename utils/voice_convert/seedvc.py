@@ -18,6 +18,7 @@ import os
 import sys
 import json
 import time
+from tempfile import TemporaryDirectory
 import numpy as np
 import soundfile as sf
 import librosa
@@ -34,11 +35,12 @@ if str(_SEEDVC_DIR) not in sys.path:
     sys.path.insert(0, str(_SEEDVC_DIR))
 
 # ── 注册表元数据 ──────────────────────────────────────────────────────────────
+_PROJECT_ROOT = _SEEDVC_DIR.parent
 _DEFAULT_AGE_GENDER_MODEL = str(
-    Path(__file__).resolve().parent.parent.parent / 'models' / 'w2v2-L-robust-6-age-gender'
+    _PROJECT_ROOT / os.environ.get("TORCH_HOME", "models") / "w2v2-L-robust-6-age-gender"
 )
-_DEFAULT_TARGET_POOL = str(
-    Path(__file__).resolve().parent / 'aishell' / 'aishell_target_speaker.json'
+_DEFAULT_TARGET_POOL = os.environ.get(
+    "NEURALVC_TARGET_POOL", str(Path(__file__).resolve().parent / "aishell" / "aishell_target_speaker.json")
 )
 
 DESCRIPTION = "NeuralVC（SeedVC v2 引擎）神经声线转换（按说话人匹配年龄/性别目标音色，需 GPU）"
@@ -521,6 +523,26 @@ def batch_convert_fn(input_dir: str, output_dir: str, logger,
     if not age_gender_model_path or not os.path.isdir(age_gender_model_path):
         raise ValueError(f"NeuralVC 需要有效的 age_gender_model_path: {age_gender_model_path}")
 
+    pool_file = Path(aishell_target_pool_path).resolve()
+    with pool_file.open(encoding="utf-8") as f:
+        aishell_pool = json.load(f)
+    references = 0
+    missing = 0
+    for groups in aishell_pool.values():
+        for speakers in groups.values():
+            for speaker in speakers:
+                path = Path(speaker["wav_path"]).expanduser()
+                if not path.is_absolute() and not path.is_file():
+                    path = pool_file.parent / path
+                if not path.is_file():
+                    missing += 1
+                speaker["wav_path"] = str(path.resolve())
+                references += 1
+    if not references or missing:
+        raise ValueError(
+            f"NeuralVC target pool has {missing} missing reference files out of {references}: {pool_file}. "
+            "Set NEURALVC_TARGET_POOL to a JSON file that points to available reference audio."
+        )
     os.makedirs(output_dir, exist_ok=True)
 
     # ── 加载模型 ─────────────────────────────────────────────────────────────
@@ -541,8 +563,6 @@ def batch_convert_fn(input_dir: str, output_dir: str, logger,
     vc_wrapper = _load_seedvc_model(ar_checkpoint_path, cfm_checkpoint_path, device)
     seedvc_sr  = vc_wrapper.sr
     logger.info(f"SeedVC: 模型加载完成，内部采样率={seedvc_sr}，输出={output_sr}，设备={device}")
-
-    aishell_pool = json.load(open(aishell_target_pool_path, 'r', encoding='utf-8'))
 
     SUPPORTED = {'.wav', '.flac', '.mp3', '.ogg', '.aiff'}
     _input_dir_p = Path(input_dir)
@@ -575,21 +595,20 @@ def batch_convert_fn(input_dir: str, output_dir: str, logger,
         logger.debug(f"SeedVC 处理: {rel}  json={json_path}")
         t0 = time.time()
         try:
-            _anonymize_file(
-                str(fp), str(out_fp), str(json_path),
-                vc_wrapper, seedvc_sr, predictor, aishell_pool,
-                output_sr=output_sr, pad_ms=pad_ms, crossfade_ms=crossfade_ms,
-                max_chunk_s=max_chunk_s, **vc_kwargs,
-            )
-            # VC 完立刻 in-place mask
-            if mask_dir:
-                mask_json = Path(mask_dir) / rel.with_suffix('.json')
-                if mask_json.exists():
+            with TemporaryDirectory(dir=out_fp.parent) as scratch:
+                pending = Path(scratch) / out_fp.name
+                _anonymize_file(
+                    str(fp), str(pending), str(json_path),
+                    vc_wrapper, seedvc_sr, predictor, aishell_pool,
+                    output_sr=output_sr, pad_ms=pad_ms, crossfade_ms=crossfade_ms,
+                    max_chunk_s=max_chunk_s, **vc_kwargs,
+                )
+                if mask_dir:
                     from apply_mask import add_adaptive_ssn_to_audio
-                    add_adaptive_ssn_to_audio(str(out_fp), str(mask_json), str(out_fp),
+                    mask_json = Path(mask_dir) / rel.with_suffix('.json')
+                    add_adaptive_ssn_to_audio(str(pending), str(mask_json), str(pending),
                                               **(mask_kwargs or {}))
-                else:
-                    logger.warning(f"未找到 mask JSON {mask_json}，跳过 mask")
+                pending.replace(out_fp)
             ok += 1
             logger.info(f"[{i+1}/{length}] 完成: {rel}  ({time.time()-t0:.2f}s)")
         except Exception:

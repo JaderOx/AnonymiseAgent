@@ -13,10 +13,12 @@ casa_downstream.py — CASA 语音匿名 Agent
 import os
 import re
 import json
+import inspect
 import time
 import argparse
 from configs.config_loader import get_asr_config, uses_character_timestamps
-from utils.vc_names import canonical_method
+from utils.agent_choices import choice_error, validate_tool_choices
+from utils.vc_names import METHODS as VC_METHODS, canonical_method
 import shutil
 import sys
 import subprocess
@@ -39,9 +41,6 @@ from utils.manage_module_memory import run_in_isolation
 from utils.agent_memory import (TwoLayerMemory, fallback_classify, _validate_experience,
                                 is_valid_new_task_type)
 
-# 可用的 VC 方法
-VC_METHODS = ["formant_lpc", "formant_spec", "pitch", "NeuralVC", "Resyn"]
-
 # 指标含义（给 LLM 参考）
 METRIC_DESCRIPTIONS = {
     "snr_db": "信噪比(dB)，越高越好",
@@ -62,8 +61,8 @@ DOWNSTREAM_METRIC_DESCRIPTIONS = {
 INITIAL_PLAN_PROMPT = f"""你是语音匿名处理 Agent。根据用户请求生成 JSON 执行计划。
 
 【可用工具】
-- run_transcription: ASR 转录。参数: language(必填，如 zh/en/ja/es), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。
-- run_mask: 识别并掩蔽录音中说出的敏感信息（依赖转录）。用户要求保护内容时，将此步骤放在声线转换前，并为转换设置 with_mask=true。参数: language(必填，如 zh/en/ja/es)。
+- run_transcription: ASR 转录。参数: language(必填，如 zh/en/ja/es), asr_model(可选: {', '.join(_ASR_CONDA_ENV)}，留空按语言选择), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。
+- run_mask: 识别并掩蔽录音中说出的敏感信息（依赖转录）。用户要求保护内容时，将此步骤放在声线转换前，并为转换设置 with_mask=true。参数: language(必填，如 zh/en/ja/es), mask_method (noise or mute, default noise). Use mask_method="mute" when the user asks to mute identifiers or replace them with silence.
 - run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language, vc_params (optional).
 {VC_PARAMETER_GUIDE}
 - run_evaluation: 评估。参数: language(必填)
@@ -78,9 +77,11 @@ Write reasoning in the language of the user request. Use a language code such as
 【输出格式】在适当位置输出 JSON，以 {{ 开头。
 {{"language":"语言","reasoning":"分析","steps":[{{"tool":"工具名","params":{{}}}}]}}
 
-示例:
-用户: "匿名化英文音频，不需要内容匿名"
-{{"language":"en","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"en"}}}},{{"tool":"run_voice_conversion","params":{{"method":"NeuralVC","language":"en"}}}},{{"tool":"run_evaluation","params":{{"language":"en"}}}}]}}
+Return exactly one JSON object with a top-level steps array. Include at most one
+run_voice_conversion call. Put method settings inside that call's vc_params object.
+
+Example request: "Mute spoken identifiers in an English recording, anonymize the voice, and evaluate."
+{{"language":"en","reasoning":"Mask spoken identifiers, change the voice, then evaluate.","steps":[{{"tool":"run_transcription","params":{{"language":"en"}}}},{{"tool":"run_mask","params":{{"language":"en","mask_method":"mute"}}}},{{"tool":"run_voice_conversion","params":{{"method":"pitch","language":"en","with_mask":true,"vc_params":{{}}}}}},{{"tool":"run_evaluation","params":{{"language":"en"}}}}]}}
 """
 
 
@@ -109,6 +110,8 @@ class AgentContext:
         M = middle_dir
         self.trans_origin_dir = os.path.join(M, 'trans_origin')
         self.mask_dir         = os.path.join(M, 'mask')
+        self.mask_method = 'noise'
+        self.text_only_dir = None
         self.spk_audio_origin = os.path.join(M, 'spk_audio', 'origin')
         self.age_gender_model = os.path.join(
             os.environ.get('TORCH_HOME', './models'), 'w2v2-L-robust-6-age-gender'
@@ -154,13 +157,13 @@ def _handle_check_directory(ctx, directory, file_type="any"):
             "message": f"找到 {len(files)} 个文件"}
 
 
-def _missing_audio_json(input_dir, json_dir):
+def _missing_audio_artifacts(input_dir, artifact_dir, suffix=None):
     root = Path(input_dir)
-    return sum(
-        not (Path(json_dir) / audio.relative_to(root).with_suffix(".json")).is_file()
-        for audio in root.rglob("*")
-        if audio.is_file() and audio.suffix.lower() in SUPPORTED_FORMATS
-    )
+    paths = (audio.relative_to(root) for audio in root.rglob("*")
+             if audio.is_file() and audio.suffix.lower() in SUPPORTED_FORMATS)
+    if suffix:
+        paths = (path.with_suffix(suffix) for path in paths)
+    return sum(not (Path(artifact_dir) / path).is_file() for path in paths)
 
 
 def _handle_transcription(ctx, language, asr_model="", hotwords=None, spk_num=0,
@@ -184,7 +187,7 @@ def _handle_transcription(ctx, language, asr_model="", hotwords=None, spk_num=0,
         min_speakers, max_speakers,
         conda_env=_ASR_CONDA_ENV.get(asr_model),
     )
-    missing = _missing_audio_json(ctx.input_dir, ctx.trans_origin_dir)
+    missing = _missing_audio_artifacts(ctx.input_dir, ctx.trans_origin_dir, ".json")
     if missing:
         return {"success": False, "error": f"Missing transcripts for {missing} input audio files. See the log."}
     return {"success": True, "trans_dir": ctx.trans_origin_dir, "asr_model": asr_model}
@@ -215,7 +218,7 @@ def _handle_mask(ctx, language, llm_model="", mask_method="noise",
         language, custom_prompt or None, llm_model, group_num, ctx.mode,
         detect_method,
     )
-    missing = _missing_audio_json(ctx.input_dir, ctx.mask_dir)
+    missing = _missing_audio_artifacts(ctx.input_dir, ctx.mask_dir, ".json")
     if missing:
         return {"success": False, "error": f"Missing content mask files for {missing} input audio files. See the log."}
     noise_method = 'formant' if mask_method == 'noise' else 'mute'
@@ -224,6 +227,11 @@ def _handle_mask(ctx, language, llm_model="", mask_method="noise",
     apply_mask(wav_dir=ctx.input_dir, mask_dir=ctx.mask_dir,
                output_dir=text_only_dir, logger=ctx.logger,
                noise_method=noise_method)
+    missing = _missing_audio_artifacts(ctx.input_dir, text_only_dir)
+    if missing:
+        return {"success": False, "error": f"Missing text-masked audio for {missing} input files. See the log."}
+    ctx.mask_method = mask_method
+    ctx.text_only_dir = text_only_dir
     return {"success": True, "text_only_dir": text_only_dir, "mask_dir": ctx.mask_dir}
 
 
@@ -234,7 +242,7 @@ def _handle_voice_conversion(ctx, method, with_mask=False, num_workers=1,
     vc_output_dir = ctx.vc_audio_dir
     name = ctx.vc_name
     spk_vc_dir = os.path.join(ctx.middle_dir, 'spk_audio', f'text_{name}' if with_mask else f'{name}_only')
-    if with_mask and not _has_json(ctx.mask_dir):
+    if with_mask and _missing_audio_artifacts(ctx.input_dir, ctx.mask_dir, ".json"):
         return {"success": False,
                 "error": "with_mask=True 但 mask 结果不存在，请先执行内容匿名步骤"}
     trans_dir_for_vc = ctx.trans_origin_dir if _has_json(ctx.trans_origin_dir) else None
@@ -245,11 +253,12 @@ def _handle_voice_conversion(ctx, method, with_mask=False, num_workers=1,
         trans_dir_for_vc, ctx.logger_file, ctx.mode,
         num_workers,
         ctx.mask_dir if with_mask else None,
-        'noise', language, whole_audio, ctx.vc_params,
+        ctx.mask_method, language, whole_audio, ctx.vc_params,
         conda_env=_VC_CONDA_ENV.get(method),
     )
-    if not _has_audio(vc_output_dir):
-        return {"success": False, "error": f"No converted audio in {vc_output_dir}"}
+    missing = _missing_audio_artifacts(ctx.input_dir, vc_output_dir)
+    if missing or not _has_audio(vc_output_dir):
+        return {"success": False, "error": f"Converted audio is incomplete ({missing} missing) in {vc_output_dir}. See the log."}
     from utils.metrics.spk_audio_extractor import extract_dir as _ext_spk_pair
     _ext_spk_pair(ctx.input_dir, vc_output_dir, ctx.trans_origin_dir,
                   ctx.spk_audio_origin, spk_vc_dir, ctx.logger)
@@ -353,7 +362,7 @@ TOOLS = [
         description="ASR 转录：将音频转为带时间戳的 JSON 文本",
         parameters={
             "language": "string (必填, 语言代码如 zh/en/ja/es)",
-            "asr_model": "string (可选, 留空自动选择)",
+            "asr_model": f"string (可选, {', '.join(_ASR_CONDA_ENV)}, 留空按语言选择)",
             "hotwords": "list (可选, 热词列表)",
             "spk_num": "int (可选, 精确说话人数量, 0=自动)",
             "min_speakers": "int (可选, 最少说话人数)",
@@ -408,56 +417,21 @@ TOOL_BY_NAME = {t.name: t for t in TOOLS}
 # JSON 解析工具
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _extract_json_braces(text: str) -> Optional[str]:
-    """从文本中提取最外层的 {...} JSON 字符串。"""
-    start = text.find('{')
-    if start == -1:
-        return None
-    depth = 0
-    for i in range(start, len(text)):
-        ch = text[i]
-        if ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                return text[start:i + 1]
-    return None
-
-
-def _parse_json_output(text: str) -> dict:
-    """从 LLM 输出中提取 JSON。多策略。"""
-    # 策略1: ```json ... ```
-    m = re.search(r'```(?:json)?\s*\n?(.*?)\n?```', text, re.DOTALL)
-    if m:
+def _json_objects(text):
+    """Yield complete JSON objects in response order, skipping their nested fields."""
+    decoder = json.JSONDecoder()
+    text = text.lstrip()
+    # Some completion templates continue immediately after an opening brace.
+    if text.startswith('"'):
+        text = '{' + text
+    cursor = 0
+    while (start := text.find('{', cursor)) != -1:
         try:
-            return json.loads(m.group(1))
+            value, cursor = decoder.raw_decode(text, start)
         except json.JSONDecodeError:
-            pass
-
-    # 策略2: 括号计数匹配
-    json_str = _extract_json_braces(text)
-    if json_str:
-        try:
-            return json.loads(json_str)
-        except json.JSONDecodeError:
-            pass
-
-    # 策略3: 在关键字段附近搜索
-    for key in ('"steps"', '"language"', '"tool"', '"done"'):
-        idx = text.find(key)
-        if idx != -1:
-            search_start = max(0, idx - 5)
-            brace_start = text.rfind('{', search_start, idx)
-            if brace_start != -1:
-                json_str = _extract_json_braces(text[brace_start:])
-                if json_str:
-                    try:
-                        return json.loads(json_str)
-                    except json.JSONDecodeError:
-                        continue
-
-    return {"error": True, "raw": text[:500]}
+            cursor = start + 1
+            continue
+        yield value
 
 
 def _validate_plan(plan: dict) -> Optional[str]:
@@ -474,18 +448,20 @@ def _validate_plan(plan: dict) -> Optional[str]:
         if not isinstance(s, dict) or not isinstance(s.get("params", {}), dict):
             return f"Invalid tool call at step {i+1}"
         name = s.get("tool", "")
+        problem = validate_tool_choices(name, s.get("params", {}), TOOL_BY_NAME, _ASR_CONDA_ENV)
+        if problem:
+            return f"Step {i+1}: {problem}"
         if name == "run_voice_conversion":
             params = s.setdefault("params", {})
+            unknown = sorted(set(params) - TOOL_BY_NAME[name].parameters.keys())
+            if unknown:
+                return f"Unexpected voice conversion fields: {', '.join(unknown)}. Put method settings inside vc_params."
             method = params.get("method")
-            if not isinstance(method, str):
-                return "run_voice_conversion requires a method name"
             params["method"] = canonical_method(method)
             try:
                 params["vc_params"] = resolve_vc_params(params["method"], params.get("vc_params"))
             except ValueError as exc:
                 return str(exc)
-        if not isinstance(name, str) or name not in TOOL_BY_NAME:
-            return f"步骤 {i+1} 包含未知工具: {name}"
     if sum(step["tool"] == "run_voice_conversion" for step in plan["steps"]) > 1:
         return "Plan one VC configuration at a time. Evaluate additional settings during reflection."
     return None
@@ -613,6 +589,8 @@ def _llm_infer_worker(model_name, sys_prompt, user_prompt, output_file, gen_kwar
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class CASA:
+    focused_memory = False
+
     def __init__(self, input_dir, output_dir, middle_dir, llm_model=None, mode='INFO',
                  temperature=0.01, max_new_tokens=2048, repetition_penalty=1.05, open_source=True,
                  memory_path=None, use_memory=True, memory_exclude_dataset=None):
@@ -695,37 +673,31 @@ class CASA:
             validator: 可选的验证函数，接收 dict 返回错误字符串或 None。
                        例如 _validate_plan。解析成功但验证失败时也会重试。
         """
-        _RETRY_HINT = "\n\n注意：请减少思考，尽快输出 JSON。以 { 开头，以 } 结尾。不要输出其他内容。"
         current_prompt = user_prompt
-
+        error = "No complete JSON object found."
         for attempt in range(max_retries):
-            # 重试时强制 temperature=0，提高确定性
-            override = {'temperature': 0, "max_new_tokens": 4096} if attempt > 0 else None
+            override = {'temperature': 0, "max_new_tokens": 4096} if attempt else None
             raw = self._call_llm(sys_prompt, current_prompt, gen_override=override)
-            if raw and raw[0] != '{':
-                raw = '{' + raw
+            candidates = list(_json_objects(raw or ''))
+            error = "No complete JSON object found."
+            for result in reversed(candidates):
+                problem = validator(result) if validator else None
+                if not problem:
+                    return result
+                if result is candidates[-1]:
+                    error = problem
+            keys = [sorted(candidate) for candidate in candidates[-5:]]
+            self.logger.warning("[LLM] Attempt %d/%d failed: %s. JSON keys: %s",
+                                attempt + 1, max_retries, error, keys)
+            hint = "Return exactly one complete JSON object that satisfies the system instructions."
+            if validator is _validate_plan:
+                hint += ' Include a top-level language code and a nonempty steps array of tool calls.'
+            current_prompt = f"{user_prompt}\n\nAttempt {attempt + 1} failed: {error}\n{hint}"
+            if attempt >= 1:
+                current_prompt += "\nReturn the final object only. Omit examples, comments, and Markdown fences."
 
-            result = _parse_json_output(raw)
-
-            # JSON 解析失败
-            if result.get("error"):
-                self.logger.warning(f"[LLM 重试] 第 {attempt+1}/{max_retries} 次 JSON 解析失败")
-                current_prompt = user_prompt + _RETRY_HINT
-                continue
-
-            # JSON 解析成功，但内容验证失败
-            if validator:
-                err = validator(result)
-                if err:
-                    self.logger.warning(f"[LLM 重试] 第 {attempt+1}/{max_retries} 次验证失败: {err}")
-                    current_prompt = f"{user_prompt}\n{err}" + _RETRY_HINT
-                    continue
-
-            self.logger.debug(f"[LLM 重试] 第 {attempt+1} 次调用成功")
-            return result
-
-        self.logger.error(f"[LLM 重试] {max_retries} 次均失败")
-        return {"error": True, "raw": "多次重试后仍无法获取有效输出"}
+        self.logger.error("[LLM] All %d attempts failed", max_retries)
+        return {"error": True, "raw": error}
 
     # ── 下游任务 ────────────────────────────────────────────────────────────
 
@@ -888,8 +860,8 @@ class CASA:
 
     def _run_downstream_for_current_vc(self):
         """一键：找匿名音频 → 生成 data.json → 跑下游 → 返回扁平指标。"""
-        anon_dir = self.ctx.vc_audio_dir
-        if not _has_audio(anon_dir):
+        anon_dir = self.ctx.vc_audio_dir if self.ctx.vc_method_used else self.ctx.text_only_dir
+        if not anon_dir or not _has_audio(anon_dir):
             self.logger.warning(f"[Downstream] No converted audio in {anon_dir}")
             return {}
         modified = self._prepare_downstream_data_json(anon_dir)
@@ -997,19 +969,16 @@ class CASA:
     # ── 初始计划 ─────────────────────────────────────────────────────────────
 
     def _generate_initial_plan(self, user_request: str) -> dict:
-        context_info = _build_context_info(self.ctx)
-
         plan_prompt = INITIAL_PLAN_PROMPT
 
         user_msg = (
-            # f"【目录信息】\n{context_info}\n"
             f"【用户请求】\n{user_request}\n\n"
         )
 
         # ── 注入跨运行双层 memory：Layer-1 任务级经验 + Layer-2 同类任务运行细节 ──
         if self.memory:
             mem_block = self.memory.recall_for_prompt(
-                task_meta=self.task_meta, exclude_dataset=self._memory_exclude)
+                task_meta=self.task_meta, exclude_dataset=self._memory_exclude, focused=self.focused_memory)
             if mem_block:
                 user_msg += (
                     f"{mem_block}\n\n"
@@ -1042,6 +1011,17 @@ class CASA:
         if tool is None:
             self.logger.error(f"[工具调用] 未知工具: {tool_name}")
             return False, {"error": f"未知工具: {tool_name}"}, 0
+
+        accepted_params = {
+            name for name, parameter in inspect.signature(tool.handler).parameters.items()
+            if name != "ctx" and parameter.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY
+            )
+        }
+        dropped_params = [name for name in params if name not in accepted_params]
+        if dropped_params:
+            self.logger.warning(f"[工具参数] {tool_name} 忽略未声明的参数: {', '.join(dropped_params)}")
+        params = {name: value for name, value in params.items() if name in accepted_params}
 
         self.logger.debug(f"[工具调用] {tool_name} | params={json.dumps(params, ensure_ascii=False)}")
         t0 = time.time()
@@ -1107,7 +1087,8 @@ class CASA:
                         and later["tool"] == "run_voice_conversion"
                         and later.get("params", {}).get("with_mask")
                     )
-                    if masked_conversion or (later_tool and tool_name in later_tool.dependencies):
+                    evaluation = later["tool"] == "run_evaluation" and tool_name in ("run_mask", "run_voice_conversion")
+                    if masked_conversion or evaluation or (later_tool and tool_name in later_tool.dependencies):
                         self.logger.debug(f"[依赖跳过] 步骤 {j+1} {later['tool']} 依赖失败的 {tool_name}，跳过")
                         print(f"  → 跳过 [{j+1}/{len(steps)}] {later['tool']}")
                         results.append({"step": later["tool"], "ok": False, "elapsed": 0,
@@ -1150,7 +1131,7 @@ class CASA:
         mem_str = ""
         if self.memory:
             mem_block = self.memory.recall_for_prompt(
-                task_meta=self.task_meta, exclude_dataset=self._memory_exclude)
+                task_meta=self.task_meta, exclude_dataset=self._memory_exclude, focused=self.focused_memory)
             if mem_block:
                 mem_str = f"\n{mem_block}"
 
@@ -1174,16 +1155,23 @@ class CASA:
         self.logger.info("向 LLM 请求反思决策...")
 
         def _validate_decision(d):
+            if not isinstance(d, dict):
+                return "Expected a JSON decision"
             for key in ("new_vc_method", "best_vc_method"):
-                if isinstance(d.get(key), str):
-                    d[key] = canonical_method(d[key])
+                if key in d:
+                    if isinstance(d[key], str):
+                        d[key] = canonical_method(d[key])
+                    problem = choice_error(key, d[key], VC_METHODS)
+                    if problem:
+                        return problem
             if not isinstance(d.get("done"), bool):
                 return "done must be true or false"
             if d["done"] and "best_vc_method" not in d:
                 return "best_vc_params requires best_vc_method" if "best_vc_params" in d else None
             method = d.get("best_vc_method" if d["done"] else "new_vc_method")
-            if not isinstance(method, str) or method not in VC_DEFAULTS:
-                return f"Unknown voice conversion method: {method!r}"
+            problem = choice_error("VC method", method, VC_METHODS)
+            if problem:
+                return problem
             key = "best_vc_params" if d["done"] else "vc_params"
             if key in d:
                 try:
@@ -1303,7 +1291,7 @@ class CASA:
 
         if not current_metrics:
             self.logger.info("No evaluation metrics available for reflection.")
-        for reflection_round in range(max_reflections if current_metrics else 0):
+        for reflection_round in range(max_reflections if current_metrics and initial_vc else 0):
             self.logger.debug(f"[反思循环] 第 {reflection_round + 1}/{max_reflections} 轮")
             print(f"\n{'='*55}")
             print(f"反思 #{reflection_round + 1}")
@@ -1431,7 +1419,7 @@ class CASA:
             "success": True,
             "final_vc_method": final_vc,
             "final_vc_params": selected["vc_params"],
-            "final_audio_dir": self.ctx.vc_audio_dir if final_vc else None,
+            "final_audio_dir": self.ctx.vc_audio_dir if final_vc else self.ctx.text_only_dir,
             "attempts": len(history),
             "history": history,
             "final_metrics": current_metrics,

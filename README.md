@@ -53,9 +53,7 @@ Fill in the model directories and token in `.env`. The commands use the default 
 | Age/gender (ASR meta annotation, TTS target-speaker matching) | `$TORCH_HOME/` (default `./models`) | `w2v2-L-robust-6-age-gender` |
 | ASR / evaluation models | auto-downloaded | Paraformer / WhisperX / UTMOS / emotion2vec / wavlm-base-plus-sv |
 
-NeuralVC selects reference speakers from `utils/voice_convert/aishell/aishell_target_speaker.json`. Set its `wav_path` entries to the corresponding local AISHELL files before running NeuralVC.
-
-> Hardware: ≥3× NVIDIA RTX 4090 recommended; with 3 GPUs keep `--group_num` < 30.
+NeuralVC selects reference speakers from `utils/voice_convert/aishell/aishell_target_speaker.json`. Set its `wav_path` entries to the corresponding local AISHELL files before running NeuralVC. You can set `NEURALVC_TARGET_POOL` to use a separate JSON file. Its reference audio is checked before NeuralVC loads its models.
 
 ---
 
@@ -90,7 +88,7 @@ CUDA_VISIBLE_DEVICES=0,1,2 python agent.py \
   --trans --language zh \
   --mask --method noise --group_num 30 \
   --vc --vc_method NeuralVC \
-  --eval --gt_dir /path/to/gt --subject_map_path /path/to/map.json
+  --eval --gt_dir /path/to/mask_gt_if_needed.json --subject_map_path /path/to/map_if_needed.json
 ```
 
 **B. Run CASA with a natural-language request** (`casa_downstream.py`)
@@ -123,6 +121,8 @@ For API inference, set `OPENAI_API_KEY` (legacy `API_KEY` remains supported), op
 `casa_downstream.py` and the English demo share the memory-enabled runtime. `casa.py` is the lightweight entry point.
 
 By default, the Agent loads the repository's `memory/`, containing 14 Qwen-generated task experiences (`experiences.json`) and 16 historical runs (`runs/`). It extracts task information from the request, recalls task experiences and relevant run details for planning and reflection, then saves the run before asking the LLM to summarize experience. No backfill tools are needed. Include the language, speaker count, downstream task and anonymization goals in your request.
+
+The Demo recalls up to three experiences and three runs that match the task type or dataset. For requests with no match, it plans from the current request and can still record the run. The CLI uses the full recall policy.
 
 - `--memory_path DIR`: select the read/write directory; the default updates the bundled `memory/`. To preserve the initial data, first run `cp -R memory /path/to/my_memory` and use that directory.
 - `--no_memory`: disable memory.

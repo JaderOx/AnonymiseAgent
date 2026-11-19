@@ -254,9 +254,10 @@ def add_adaptive_ssn_to_audio(audio_path, mask_path, output_path="./output", tim
     # 3. 处理每个时间段
     with open(mask_path, 'r', encoding='utf-8') as f:
         time_ranges = json.load(f)
-    idx = 0
+    ssn_gen = None
     for item in time_ranges:
-        idx += 1
+        if item["end"] <= item["start"]:
+            continue
         start_time = (item["start"] - time_append)/1000
         end_time = (item["end"] + time_append)/1000
 
@@ -314,7 +315,7 @@ def add_adaptive_ssn_to_audio(audio_path, mask_path, output_path="./output", tim
     # 5. 保存结果
     sf.write(output_path, protected, sr)
     
-    return audio, protected, sr, ssn_gen if ssn_gen.formant_freqs is not None else None
+    return audio, protected, sr, ssn_gen if ssn_gen is not None and ssn_gen.formant_freqs is not None else None
 
 # ============== 批量处理函数 ==============
 def apply_mask(
@@ -333,7 +334,7 @@ def apply_mask(
     
     from pathlib import Path as _Path
     _wav_dir_p = _Path(wav_dir)
-    supported_formats = {'.wav', '.mp3', '.flac', '.ogg'}
+    supported_formats = {'.wav', '.mp3', '.flac', '.ogg', '.aiff'}
     audio_files = sorted([p for p in _wav_dir_p.rglob('*')
                            if p.suffix.lower() in supported_formats])
     if not audio_files:

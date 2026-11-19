@@ -2,9 +2,9 @@ Input audio directory
 /path/to/synthetic/audio
 
 Anonymization requirements
-- These are English recordings. Transcribe them with WhisperX. Use one speaker per recording unless the audio indicates otherwise.
+- These are English recordings. Use one speaker per recording.
 - The recordings contain sensitive personal information. Detect and mask every spoken identifier in the audio, including names, phone numbers, email addresses, street addresses, dates of birth, and personal or medical record numbers. Preserve the rest of the wording.
-- Anonymize the speaker's voice using pitch with the default shift. Preserve intelligibility and prosody as much as possible.
+- Anonymize the speaker's voice. Preserve intelligibility and prosody as much as possible.
 - Evaluate the final recording after both content masking and voice anonymization. Report the available privacy and speech-quality metrics.
 
 Decision model

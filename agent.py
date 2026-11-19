@@ -35,7 +35,6 @@ _VC_CONDA_ENV = {
     'formant_lpc':  None,
     'formant_spec': None,
     'pitch':        None,
-    'combined':     None,
     'NeuralVC':     None,
     'Resyn': 'fishaudio',
 }
@@ -82,18 +81,12 @@ def _require_json(directory, desc, logger):
 def mask(trans_dir, mask_dir, logger_file, language, prompt, llm_model, group_num, mode, mask_method='llm'):
     logger = get_logger(logger_file, 'mask', mode)
 
-    # ── 增量跳过：输出目录 JSON 数量 >= 输入 JSON 数量则跳过 ──
-    from pathlib import Path as _Path
-    _mask_dir_p = _Path(mask_dir)
-    _trans_dir_p = _Path(trans_dir)
-    if _mask_dir_p.exists() and _trans_dir_p.exists():
-        _input_jsons = [f for f in _trans_dir_p.rglob('*.json') if f.name != 'args.json']
-        _output_jsons = [f for f in _mask_dir_p.rglob('*.json') if f.name != 'args.json']
-        if len(_output_jsons) >= len(_input_jsons) > 0:
-            logger.info(
-                f"[跳过] 内容匿名结果已存在（{len(_output_jsons)} 条 >= 输入 {len(_input_jsons)} 条），不加载 LLM"
-            )
-            return
+    transcript_root = Path(trans_dir)
+    transcript_paths = [p for p in transcript_root.rglob('*.json') if p.name != 'args.json']
+    if transcript_paths and all((Path(mask_dir) / p.relative_to(transcript_root)).is_file()
+                                for p in transcript_paths):
+        logger.info("[Cache] Content masks exist for all transcripts")
+        return
     if mask_method == 'ner':
         from mask_ner import mask_ner
         mask_ner(
@@ -146,18 +139,22 @@ def vc(input_dir, output_dir, method, trans_dir, logger_file, mode,
         )
         return
 
-    batch_convert(
-        input_dir=input_dir,
-        output_dir=output_dir,
-        logger=logger,
-        method=method,
-        trans_dir=None if whole_audio else trans_dir,
-        num_workers=num_workers,
-        mask_dir=mask_dir,
-        mask_method=mask_method,
-        language=language,
-        **(vc_params or {}),
-    )
+    try:
+        batch_convert(
+            input_dir=input_dir,
+            output_dir=output_dir,
+            logger=logger,
+            method=method,
+            trans_dir=None if whole_audio else trans_dir,
+            num_workers=num_workers,
+            mask_dir=mask_dir,
+            mask_method="formant" if mask_method == "noise" else mask_method,
+            language=language,
+            **(vc_params or {}),
+        )
+    except Exception:
+        logger.exception("Voice conversion failed for %s", method)
+        raise
 
 
 # ── 主流程 ──────────────────────────────────────────────────────
@@ -180,7 +177,7 @@ def main():
     parser.add_argument('--vc_method', type=canonical_method,
                         choices=METHODS,
                         default='NeuralVC',
-                        help='VC 方法（combined = 共振峰缩放+变调；NeuralVC = 神经网络，需 GPU, 默认NeuralVC）')
+                        help='VC 方法（NeuralVC = 神经网络，需 GPU, 默认NeuralVC）')
     parser.add_argument('--vc_whole', action='store_true',
                         help='VC 全音频模式：整段送入处理，不按转录分句（适合短音频；不支持 Resyn）')
     parser.add_argument('--vc_workers', type=int, default=1,
@@ -329,14 +326,11 @@ def main():
                              
             logger.info("LLM 内存已释放\n")
 
-            # from apply_mask import apply_mask
-            # apply_mask(
-            #     wav_dir=args.input_dir,
-            #     mask_dir=mask_dir,
-            #     output_dir=text_only_dir,
-            #     logger=logger,
-            #     noise_method=noise_method
-            # )
+            if not args.vc:
+                from apply_mask import apply_mask
+                apply_mask(wav_dir=args.input_dir, mask_dir=mask_dir,
+                           output_dir=text_only_dir, logger=logger, noise_method=noise_method)
+                _require_audio(text_only_dir, "内容匿名输出", logger)
         else:
             logger.info("跳过内容匿名步骤\n")
 

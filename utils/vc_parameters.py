@@ -14,7 +14,6 @@ VC_DEFAULTS = {
         "similarity_cfg_rate": 0.7,
     },
     "Resyn": {"fishaudio_emotion": "Suffocating"},
-    "combined": {"formant_scale": 1.05, "pitch_steps": -2.0},
 }
 
 VC_PARAMETER_GUIDE = (
@@ -24,8 +23,7 @@ VC_PARAMETER_GUIDE = (
     "alpha is the McAdams coefficient, and scale is the spectral formant multiplier. "
     "NeuralVC accepts the diffusion step count, duration multiplier and guidance "
     "strengths for intelligibility and speaker similarity. Resyn accepts a Fish Speech "
-    "emotion label or an empty string to disable the tag. When the user explicitly requests "
-    "combined, formant_scale and pitch_steps set its formant multiplier and pitch shift. Defaults by method:\n"
+    "emotion label or an empty string to disable the tag. Defaults by method:\n"
     + json.dumps(VC_DEFAULTS, indent=2)
 )
 

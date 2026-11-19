@@ -53,7 +53,7 @@ cp .env.example .env
 | 年龄/性别（asr的meta标注、tts 目标说话人匹配） | `$TORCH_HOME/`（默认 `./models`） | `w2v2-L-robust-6-age-gender` |
 | ASR / 评估模型 | 自动下载 | Paraformer / WhisperX / UTMOS / emotion2vec / wavlm-base-plus-sv |
 
-NeuralVC 从 `utils/voice_convert/aishell/aishell_target_speaker.json` 选取参考说话人。使用 NeuralVC 前，将其中的 `wav_path` 改为对应 AISHELL 音频的本地路径。
+NeuralVC 从 `utils/voice_convert/aishell/aishell_target_speaker.json` 选取参考说话人。使用 NeuralVC 前，将其中的 `wav_path` 改为对应 AISHELL 音频的本地路径。也可通过 `NEURALVC_TARGET_POOL` 指定单独的 JSON 文件，NeuralVC 在加载模型前会检查参考音频是否存在。
 
 > 硬件：建议 ≥3 张 NVIDIA RTX 4090；3 张时 `--group_num` 建议 < 30。
 
@@ -67,7 +67,7 @@ NeuralVC 从 `utils/voice_convert/aishell/aishell_target_speaker.json` 选取参
 python download_models.py --list            # 预览会下哪些
 python download_models.py                   # 默认集：asr + llm + age-gender + eval + vc
 python download_models.py --targets all     # 全部
-python download_models.py --no-llm          # 先不下 32B 大模型，快速跑通 ASR/VC/eval
+python download_models.py --no-llm          # 先不下载 32B 大模型，快速跑通 ASR/VC/eval
 ```
 
 类别：`asr` / `llm` / `age-gender` / `eval` / `whisperx` / `vc` / `all`。
@@ -123,6 +123,8 @@ bash demo/demo.sh --llm Qwen2.5-32B-Instruct --port 7860
 `casa_downstream.py` 和英文 Demo 共用带记忆的运行流程。`casa.py` 是精简入口。
 
 默认加载仓库根目录的 `memory/`，包含Qwen 总结的 14 条任务经验（`experiences.json`）和 16 份历史运行记录（`runs/`）。Agent 从用户请求提取任务信息，在规划和反思时召回任务经验及相关运行明细；运行结束先保存记录，再由 LLM 总结经验，无需额外回填工具。建议在请求中写明语言、说话人数、下游任务和匿名化目标。
+
+Demo 按任务类型或数据集召回，各取最多三条经验和运行记录。无匹配项时根据当前请求规划，仍可保存本次运行。命令行入口继续使用完整召回策略。
 
 - `--memory_path DIR`：指定读写目录；默认使用并更新随仓库提供的 `memory/`。若要保留初始经验，可先执行 `cp -R memory /path/to/my_memory`，再指定该目录。
 - `--no_memory`：关闭记忆。

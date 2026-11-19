@@ -1,5 +1,5 @@
 """Public method names and input aliases for historical plans and results."""
-METHODS = ("formant_lpc", "formant_spec", "pitch", "combined", "NeuralVC", "Resyn")
+METHODS = ("formant_lpc", "formant_spec", "pitch", "NeuralVC", "Resyn")
 ALIASES = {
     "mcadams": "formant_lpc",
     "formant": "formant_spec",

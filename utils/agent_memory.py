@@ -49,6 +49,7 @@ MAX_RUNS_IN_LAYER2_PROMPT = 6
 
 # Layer-1 全量注入的条数上限，超过则只注同 task_type + 最近条目
 MAX_EXPERIENCES_IN_PROMPT = 30
+DEMO_RECALL_LIMIT = 3
 
 # 入 memory 时各文本字段的截断长度
 MAX_TEXT_LEN = 300        # reason / reflection
@@ -651,18 +652,31 @@ class TwoLayerMemory:
 
     # ── recall（注入 prompt）────────────────────────────────────────
 
-    def recall_records(self, task_meta=None, exclude_dataset=None):
+    def recall_records(self, task_meta=None, exclude_dataset=None, *, focused=False):
         """Select the same experiences and runs for the decision prompt and the demo."""
         exps = [e for e in self.experiences
                 if not (exclude_dataset and e.get('dataset') == exclude_dataset)]
         exps.sort(key=lambda e: e.get('updated_at') or '', reverse=True)
         truncated = False
         cur_type = (task_meta or {}).get('task_type')
+        dataset = (task_meta or {}).get('dataset')
+        if focused:
+            def matches(record):
+                if exclude_dataset and record.get('dataset') == exclude_dataset:
+                    return False
+                return bool(
+                    (dataset and record.get('dataset') == dataset)
+                    or (cur_type not in (None, '', 'other') and record.get('task_type') == cur_type)
+                )
+
+            matched_exps = [record for record in exps if matches(record)]
+            matched_runs = [record for record in reversed(self.runs) if matches(record)]
+            limit = DEMO_RECALL_LIMIT
+            return matched_exps[:limit], matched_runs[:limit], len(matched_exps) > limit, bool(matched_runs)
         if len(exps) > MAX_EXPERIENCES_IN_PROMPT:
             keep = [e for e in exps if cur_type and e.get('task_type') == cur_type]
             keep += [e for e in exps if e not in keep][:MAX_EXPERIENCES_IN_PROMPT - len(keep)]
             exps, truncated = keep[:MAX_EXPERIENCES_IN_PROMPT], True
-        dataset = (task_meta or {}).get('dataset')
         runs = []
         for r in reversed(self.runs):
             if exclude_dataset and r.get('dataset') == exclude_dataset:
@@ -681,12 +695,12 @@ class TwoLayerMemory:
             runs = runs[:MAX_RUNS_IN_LAYER2_PROMPT]
         return exps, runs, truncated, related
 
-    def recall_for_prompt(self, task_meta=None, exclude_dataset=None):
+    def recall_for_prompt(self, task_meta=None, exclude_dataset=None, *, focused=False):
         """生成注入 prompt 的「历史经验」文本块（由粗到细两段）。空 memory 返回 ''。"""
         if not self.experiences and not self.runs:
             return ''
 
-        exps, runs, truncated, related = self.recall_records(task_meta, exclude_dataset)
+        exps, runs, truncated, related = self.recall_records(task_meta, exclude_dataset, focused=focused)
         cur_type = (task_meta or {}).get('task_type')
         exp_lines = []
         for e in exps:
@@ -705,9 +719,10 @@ class TwoLayerMemory:
                 best = sorted(bacc_map.items(),
                               key=lambda kv: -(kv[1] if isinstance(kv[1], (int, float)) else -1))[:3]
                 metrics += " 各方法bacc: " + ",".join(f"{m}={_fmt(v)}" for m, v in best)
+            lesson = _truncate(e.get('lesson'), 700) if focused else e.get('lesson')
             exp_lines.append(
                 f"{head}\n  推荐={rec} | 避免={avoid} | 运行{e.get('n_runs', len(e.get('run_ids', [])))}次{metrics}"
-                f"\n  经验: {e.get('lesson')}")
+                f"\n  经验: {lesson}")
         l1_block = ''
         if exp_lines:
             note = f"（共 {len(self.experiences)} 条{'' if not truncated else '，已按相关性裁剪'}）"

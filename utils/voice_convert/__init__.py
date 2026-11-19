@@ -52,12 +52,11 @@ def list_methods() -> list:
 # ── DSP 方法注册 ─────────────────────────────────────────────
 # 注意：register 名 = 论文方法名（与 output/middle 结果目录名一致）；
 # 模块文件名仍是引擎实现身份（formant.py / mcadams.py / seedvc.py / fishaudio_tts.py）
-from . import formant, pitch, mcadams, combined   # noqa: E402
+from . import formant, pitch, mcadams   # noqa: E402
 
 register("formant_spec", formant.convert,  formant.DEFAULTS,  formant.DESCRIPTION)
 register("pitch",        pitch.convert,    pitch.DEFAULTS,    pitch.DESCRIPTION)
 register("formant_lpc",  mcadams.convert,  mcadams.DEFAULTS,  mcadams.DESCRIPTION)
-register("combined",     combined.convert, combined.DEFAULTS, combined.DESCRIPTION)
 
 # ── 神经网络 VC ──────────────────────────────────────────────
 from . import seedvc   # noqa: E402

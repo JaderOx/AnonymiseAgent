@@ -10,7 +10,6 @@ voice_convert.py — 统一 VC 接口（薄层调度）
 具体 VC 实现位于 utils/voice_convert/，通过注册表统一管理：
   formant_spec : STFT 快速共振峰缩放（模块 formant.py）
   pitch        : 相位声码器变调
-  combined     : formant_spec + pitch
   formant_lpc  : McAdams OLA-LPC（模块 mcadams.py）
   NeuralVC     : vc大模型（需要整批处理，引擎 seedvc/）
 
@@ -26,6 +25,7 @@ import numpy as np
 import librosa
 import soundfile as sf
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from utils.voice_convert import get as _get_method, list_methods
 
@@ -141,7 +141,7 @@ def _sentence_level_convert(sig: np.ndarray, sr: int, sentences: list,
 # 对外接口
 # ─────────────────────────────────────────────────────────────
 
-def convert_audio(input_path, output_path, method: str = "combined",
+def convert_audio(input_path, output_path, method: str = "formant_spec",
                   trans_json=None, pad_ms: int = 150,
                   crossfade_ms: int = 30, **kwargs):
     """
@@ -214,14 +214,17 @@ def convert_audio(input_path, output_path, method: str = "combined",
 def _worker(args):
     fp_str, out_str, method, trans_json_str, pad_ms, crossfade_ms, mask_json_str, mask_kwargs, kwargs = args
     try:
-        convert_audio(fp_str, out_str, method=method,
-                      trans_json=trans_json_str,
-                      pad_ms=pad_ms, crossfade_ms=crossfade_ms,
-                      **kwargs)
-        # 如果提供了 mask JSON，VC 完立刻 in-place 覆写
-        if mask_json_str and Path(mask_json_str).exists():
-            from apply_mask import add_adaptive_ssn_to_audio
-            add_adaptive_ssn_to_audio(out_str, mask_json_str, out_str, **mask_kwargs)
+        out_path = Path(out_str)
+        with TemporaryDirectory(dir=out_path.parent) as scratch:
+            pending = Path(scratch) / out_path.name
+            convert_audio(fp_str, str(pending), method=method,
+                          trans_json=trans_json_str,
+                          pad_ms=pad_ms, crossfade_ms=crossfade_ms,
+                          **kwargs)
+            if mask_json_str:
+                from apply_mask import add_adaptive_ssn_to_audio
+                add_adaptive_ssn_to_audio(str(pending), mask_json_str, str(pending), **mask_kwargs)
+            pending.replace(out_path)
         return fp_str, True, None
     except Exception as e:
         import traceback
@@ -229,7 +232,7 @@ def _worker(args):
 
 
 def batch_convert(input_dir, output_dir, logger,
-                  method: str = "combined",
+                  method: str = "formant_spec",
                   trans_dir=None, pad_ms: int = 150,
                   crossfade_ms: int = 30, num_workers: int = 1,
                   mask_dir=None, mask_method: str = 'formant',
@@ -248,16 +251,17 @@ def batch_convert(input_dir, output_dir, logger,
         language    : 流水线语言（如 agent --language），TTS 方法用于选 en/ch 参考音等
     """
     # ── 增量跳过：输出目录音频数 >= 输入音频数则跳过 ──
-    _input_dir_p = Path(input_dir)
-    _output_dir_p = Path(output_dir)
-    _input_count = len([p for p in _input_dir_p.rglob('*') if p.suffix.lower() in SUPPORTED]) if _input_dir_p.exists() else 0
-    if _output_dir_p.exists() and _input_count > 0:
-        _output_count = len([p for p in _output_dir_p.rglob('*') if p.suffix.lower() in SUPPORTED])
-        if _output_count >= _input_count:
-            logger.info(
-                f"[跳过] VC 输出已存在（{_output_count} 条 >= 输入 {_input_count} 条），不加载模型"
-            )
-            return
+    input_root = Path(input_dir)
+    output_root = Path(output_dir)
+    paths = sorted(p.relative_to(input_root) for p in input_root.rglob('*')
+                   if p.is_file() and p.suffix.lower() in SUPPORTED)
+    if mask_dir:
+        missing = sum(not (Path(mask_dir) / rel.with_suffix('.json')).is_file() for rel in paths)
+        if missing:
+            raise ValueError(f"Missing content mask files for {missing} input audio files in {mask_dir}")
+    if paths and all((output_root / rel).is_file() and (output_root / rel).stat().st_size > 0 for rel in paths):
+        logger.info("[Cache] Conversion output exists for all inputs")
+        return
 
     start_time = time.time()
     entry = _get_method(method)
@@ -318,10 +322,7 @@ def batch_convert(input_dir, output_dir, logger,
         mask_json = None
         if mask_dir:
             m = Path(mask_dir) / rel.with_suffix('.json')
-            if m.exists():
-                mask_json = str(m)
-            else:
-                logger.warning(f"未找到 mask JSON {m.name}，{rel} 跳过 mask")
+            mask_json = str(m)
 
         tasks.append((str(fp), str(out_fp), method,
                       trans_json, pad_ms, crossfade_ms, mask_json, mask_kwargs, vc_kwargs))
@@ -375,13 +376,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="语音转换独立测试")
     parser.add_argument("-i", "--input_dir",   required=True)
     parser.add_argument("-o", "--output_dir",  required=True)
-    parser.add_argument("--method",       type=canonical_method, choices=list_methods(), default="combined")
+    parser.add_argument("--method",       type=canonical_method, choices=list_methods(), default="formant_spec")
     parser.add_argument("--trans_dir",    default=None,
                         help="转录 JSON 目录（提供则启用分句模式）")
     parser.add_argument("--pad_ms",       type=int,   default=150)
     parser.add_argument("--crossfade_ms", type=int,   default=30)
     parser.add_argument("--workers",      type=int,   default=1)
-    # combined / formant_spec 参数
+    # formant_spec / pitch 参数
     parser.add_argument("--formant_scale", type=float, default=1.1)
     parser.add_argument("--pitch_steps",   type=float, default=-3.0)
     # formant_lpc 参数

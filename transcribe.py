@@ -207,7 +207,7 @@ def transcribe(
             )
     # 防止 LLM 误传文件路径（如 .json 或单个音频）作为输入目录
     wav_dir_p = Path(wav_dir)
-    supported = {'.wav', '.mp3', '.flac', '.ogg'}
+    supported = {'.wav', '.mp3', '.flac', '.ogg', '.aiff'}
     if wav_dir_p.is_file():
         logger.warning(f"输入路径是文件而非目录，只转录该文件: {wav_dir}")
         audio_files = [wav_dir_p]

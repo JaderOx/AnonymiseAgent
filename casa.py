@@ -14,9 +14,11 @@ casa.py — CASA 语音匿名 Agent
 import os
 import re
 import json
+import inspect
 import time
 import argparse
 from configs.config_loader import get_asr_config, uses_character_timestamps
+from utils.agent_choices import choice_error, validate_tool_choices
 from utils.vc_names import METHODS as VC_METHODS, canonical_method
 import sys
 import tempfile
@@ -250,7 +252,7 @@ TOOLS = [
         description="ASR 转录：将音频转为带时间戳的 JSON 文本",
         parameters={
             "language": "string (必填, 语言代码如 zh/en/ja/es)",
-            "asr_model": "string (可选, 留空自动选择)",
+            "asr_model": f"string (可选, {', '.join(_ASR_CONDA_ENV)}, 留空按语言选择)",
             "hotwords": "list (可选, 热词列表)",
             "spk_num": "int (可选, 精确说话人数量, 0=自动)",
             "min_speakers": "int (可选, 最少说话人数)",
@@ -276,7 +278,7 @@ TOOLS = [
         name="run_voice_conversion",
         description="声线转换：改变说话人声线特征",
         parameters={
-            "method": "string (必填, formant_lpc/formant_spec/pitch/combined/NeuralVC/Resyn)",
+            "method": f"string (必填, {', '.join(VC_METHODS)})",
             "with_mask": "bool (可选, 默认 false)",
             "num_workers": "int (可选, 默认1)",
             "whole_audio": "bool (可选, 默认 false)",
@@ -370,14 +372,13 @@ def _validate_plan(plan: dict) -> Optional[str]:
         if not isinstance(s, dict) or not isinstance(s.get("params", {}), dict):
             return f"Invalid tool call at step {i+1}"
         name = s.get("tool", "")
+        problem = validate_tool_choices(name, s.get("params", {}), TOOL_BY_NAME, _ASR_CONDA_ENV)
+        if problem:
+            return f"Step {i+1}: {problem}"
         if name == "run_voice_conversion":
             params = s.setdefault("params", {})
             method = params.get("method")
-            if not isinstance(method, str) or canonical_method(method) not in VC_METHODS:
-                return f"Unknown voice conversion method: {method!r}"
             params["method"] = canonical_method(method)
-        if not isinstance(name, str) or name not in TOOL_BY_NAME:
-            return f"步骤 {i+1} 包含未知工具: {name}"
     return None
 
 
@@ -555,7 +556,10 @@ class CASA:
                 err = validator(result)
                 if err:
                     self.logger.warning(f"[LLM 重试] 第 {attempt+1}/{max_retries} 次验证失败: {err}")
-                    current_prompt = user_prompt + _RETRY_HINT
+                    current_prompt = (
+                        f"{user_prompt}\n\n上一次输出无效：{err}\n请修正选择并返回完整 JSON。"
+                        + _RETRY_HINT
+                    )
                     continue
 
             self.logger.debug(f"[LLM 重试] 第 {attempt+1} 次调用成功")
@@ -574,7 +578,7 @@ class CASA:
 【重要】所有工具的 language 参数必须用中文书写（"中文"/"英文"/"日文"/"西班牙语"等），不要用英文或拼音。
 
 【可用工具】
-- run_transcription: ASR 转录。参数: language(必填，如 zh/en/ja/es), asr_model(可选), hotwords(可选), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。spk_num 和 min/max_speakers 三选一，都不填则自动检测
+- run_transcription: ASR 转录。参数: language(必填，如 zh/en/ja/es), asr_model(可选: {', '.join(_ASR_CONDA_ENV)}，留空按语言选择), hotwords(可选), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。spk_num 和 min/max_speakers 三选一，都不填则自动检测
 - run_mask: 内容匿名（依赖转录）。参数: language(必填，中文), mask_method(noise/mute), detect_method(llm/ner, 默认llm), group_num(每批处理句数，30-60，不要与说话人数混淆)
 - run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language
 - run_evaluation: 评估。参数: language(必填), gt_dir(可选), subject_map_path(可选)
@@ -619,6 +623,17 @@ class CASA:
         if tool is None:
             self.logger.error(f"[工具调用] 未知工具: {tool_name}")
             return False, {"error": f"未知工具: {tool_name}"}, 0
+
+        accepted_params = {
+            name for name, parameter in inspect.signature(tool.handler).parameters.items()
+            if name != "ctx" and parameter.kind in (
+                inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY
+            )
+        }
+        dropped_params = [name for name in params if name not in accepted_params]
+        if dropped_params:
+            self.logger.warning(f"[工具参数] {tool_name} 忽略未声明的参数: {', '.join(dropped_params)}")
+        params = {name: value for name, value in params.items() if name in accepted_params}
 
         self.logger.debug(f"[工具调用] {tool_name} | params={json.dumps(params, ensure_ascii=False)}")
         t0 = time.time()
@@ -695,13 +710,19 @@ class CASA:
         self.logger.info("向 LLM 请求反思决策...")
 
         def _validate_decision(d):
+            if not isinstance(d, dict):
+                return "Expected a JSON decision"
             for key in ("new_vc_method", "best_vc_method"):
-                if isinstance(d.get(key), str):
-                    d[key] = canonical_method(d[key])
-            if "done" not in d:
-                return "缺少 'done' 字段"
+                if key in d:
+                    if isinstance(d[key], str):
+                        d[key] = canonical_method(d[key])
+                    problem = choice_error(key, d[key], VC_METHODS)
+                    if problem:
+                        return problem
+            if not isinstance(d.get("done"), bool):
+                return "done must be true or false"
             if not d["done"] and "new_vc_method" not in d:
-                return "done=false 时缺少 'new_vc_method' 字段"
+                return choice_error("new_vc_method", None, VC_METHODS)
             return None
 
         decision = self._call_llm_with_retry(

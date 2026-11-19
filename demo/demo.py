@@ -1,5 +1,6 @@
 """Gradio interface for running CASA on a server-side audio directory."""
 import argparse
+from functools import partial
 import json
 import os
 from pathlib import Path
@@ -16,9 +17,9 @@ load_dotenv(ROOT / '.env')
 import gradio as gr
 from casa_downstream import CASA
 
-DEFAULT_REQUEST = """- These are English recordings. Transcribe them with WhisperX. Use one speaker per recording unless the audio indicates otherwise.
+DEFAULT_REQUEST = """- These are English recordings. Use one speaker per recording.
 - The recordings contain sensitive personal information. Detect and mask every spoken identifier in the audio, including names, phone numbers, email addresses, street addresses, dates of birth, and personal or medical record numbers. Preserve the rest of the wording.
-- Anonymize the speaker's voice using pitch with the default shift. Preserve intelligibility and prosody as much as possible.
+- Anonymize the speaker's voice. Preserve intelligibility and prosody as much as possible.
 - Evaluate the final recording after both content masking and voice anonymization. Report the available privacy and speech-quality metrics."""
 
 EVENT_LABELS = {
@@ -33,13 +34,16 @@ EVENT_LABELS = {
 
 class DemoCASA(CASA):
     """Forward events from the same runtime used by the command line."""
+
+    focused_memory = True
     def __init__(self, *args, on_update=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.on_update = on_update or (lambda *args: None)
 
     def _generate_initial_plan(self, request):
         if self.memory:
-            experiences, runs, _, related = self.memory.recall_records(self.task_meta, self._memory_exclude)
+            experiences, runs, _, related = self.memory.recall_records(
+                self.task_meta, self._memory_exclude, focused=self.focused_memory)
             recalled = {
                 'Task experiences': [
                     {'Dataset': exp.get('dataset'), 'Task': exp.get('task_type'),
@@ -54,6 +58,8 @@ class DemoCASA(CASA):
                     for run in runs
                 ],
             }
+            if not experiences and not runs:
+                recalled = {'Status': 'No matching cross-run experience for this request.'}
             self.on_update('memory', recalled)
         plan = super()._generate_initial_plan(request)
         if plan and self.open_source:
@@ -93,7 +99,7 @@ def _find_output_audio(selected_dir):
 
 def run_demo(input_dir, request, llm, local_llm, use_memory, memory_path,
              output_dir, middle_dir, max_reflections, downstream_data, downstream_script,
-             gt_dir, subject_map):
+             gt_dir, subject_map, *, mode="INFO"):
     input_path = Path(input_dir.strip()).expanduser().resolve()
     if not input_dir.strip() or not input_path.is_dir():
         raise gr.Error('Enter an existing audio directory on the server.')
@@ -111,7 +117,7 @@ def run_demo(input_dir, request, llm, local_llm, use_memory, memory_path,
             agent = DemoCASA(
                 input_dir=str(input_path), output_dir=output_dir, middle_dir=middle_dir,
                 llm_model=llm.strip() or None, open_source=local_llm,
-                use_memory=use_memory, memory_path=memory_path.strip() or str(ROOT / 'memory'),
+                mode=mode, use_memory=use_memory, memory_path=memory_path.strip() or str(ROOT / 'memory'),
                 on_update=lambda kind, data: events.put((kind, data)),
             )
             agent.downstream_data_json = downstream_data.strip() or None
@@ -174,7 +180,7 @@ def build_ui(default_llm=None, mode='INFO'):
                 trace = gr.Textbox(label='Plan, tool calls and reflections', lines=12, interactive=False)
                 result = gr.JSON(label='Selected method, parameters and metrics')
                 audio = gr.Audio(label='Selected audio preview')
-        run.click(run_demo, inputs=[input_dir, request, llm, local, memory, memory_path,
+        run.click(partial(run_demo, mode=mode), inputs=[input_dir, request, llm, local, memory, memory_path,
                   output_dir, middle_dir, max_ref, downstream_data, downstream_script, gt_dir, subject_map],
                   outputs=[status, recalled, trace, result, audio], concurrency_limit=1)
     return app

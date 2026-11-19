@@ -5,16 +5,16 @@
   "task_meta": {
     "language": "Mandarin Chinese",
     "n_speakers": null,
-    "downstream_task": "心理危机风险检测",
-    "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+    "downstream_task": "Psychological crisis risk detection",
+    "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
     "source": "llm",
     "warnings": [
-      "任务信息缺少字段 ['n_speakers']（用户 request 原文未提供，建议在 -r 中写明：语言/说话人数量/下游任务）"
+      "Task metadata is missing n_speakers. The original request did not specify it. Include the language, speaker count, and downstream task in -r."
     ]
   },
   "dataset": "Crisis",
   "language": "Mandarin Chinese",
-  "request": "Crisis is an in-house Mandarin Chinese psychological-support hotline dataset comprising 154 recordings (approximately 100 hours in total; mean duration 39.49 minutes). \nThe study was conducted at the Beijing Psychological Support Hotline which provides services to callers from around China, three-fourths of whom live outside of the Beijing Municipality. Hotline operators are full-time employees with a psychology or psychiatry background who receive at least 3 months full-time training in the provision of hotline services before independently taking calls.\nRecordings were independently annotated by two clinical experts into three crisis levels: no crisis (55 participants), low crisis (42), and medium-to-high crisis (57). Conversations cover a broad range of personal issues, including depression, anxiety, relationship stress and suicidal ideation, and may contain privacy-sensitive information such as names, locations and phone numbers.\nThe study was approved by the Institutional Review Board of Beijing Huilongguan Hospital (2014-106, 2024-76). Before callers were connected to a hotline operator, they were informed by a voice message that all calls of the hotline would be tape-recorded and that data utilised for research purposes would be analysed anonymously.  不需要文本匿名，跑所有方法总结处理该类任务的经验",
+  "request": "Crisis is an in-house Mandarin Chinese psychological-support hotline dataset comprising 154 recordings (approximately 100 hours in total; mean duration 39.49 minutes). \nThe study was conducted at the Beijing Psychological Support Hotline which provides services to callers from around China, three-fourths of whom live outside of the Beijing Municipality. Hotline operators are full-time employees with a psychology or psychiatry background who receive at least 3 months full-time training in the provision of hotline services before independently taking calls.\nRecordings were independently annotated by two clinical experts into three crisis levels: no crisis (55 participants), low crisis (42), and medium-to-high crisis (57). Conversations cover a broad range of personal issues, including depression, anxiety, relationship stress and suicidal ideation, and may contain privacy-sensitive information such as names, locations and phone numbers.\nThe study was approved by the Institutional Review Board of Beijing Huilongguan Hospital (2014-106, 2024-76). Before callers were connected to a hotline operator, they were informed by a voice message that all calls of the hotline would be tape-recorded and that data utilised for research purposes would be analysed anonymously.  Keep the spoken content and evaluate all methods to summarize what works for this task.",
   "output_dir": "/path/to/data/Crisis/anonymise/output",
   "timestamp": "2026-09-30T23:25:39",
   "attempts": 5,
@@ -89,21 +89,21 @@
     }
   },
   "reflections": [
-    "pitch: 用户要求对中文危机干预热线数据集进行语音匿名处理，明确不需要文本匿名（跳过 run_mask）。用户要求'跑所有方法总结处理该类任务的经验'，但根据系统提示'如果用户要求使用多种声线匿名方法，这不是你的任务，任选一种作为计划执行即可'，因此我将选择一种最合适的声线转换方法。参考 Layer-1 经验，在类似依赖细微声学特征的任务中，pitch 变换表现最佳（保留声学特征且隐私保护较好），而 Resyn 表现最差。因此选择 pitch 作为本次执行的声线转换方法。流程包括：转录 -> 声线转换(pitch) -> 评估。",
-    "formant_lpc: 用户要求跑所有方法总结经验，目前仅尝试了pitch，需继续尝试未使用的方法",
-    "formant_spec: 用户要求跑所有方法总结经验，目前仅尝试了pitch和formant_lpc，还有formant_spec、NeuralVC、Resyn未尝试",
-    "NeuralVC: 用户要求跑所有方法总结经验，目前已尝试 pitch, formant_lpc, formant_spec，还剩 NeuralVC 和 Resyn 未尝试",
-    "Resyn: 用户要求跑所有方法总结经验，目前已尝试 pitch, formant_lpc, formant_spec, NeuralVC，仅剩 Resyn 未尝试"
+    "pitch: The user requests anonymization of Mandarin crisis hotline recordings, explicitly skips run_mask, and asks to run all methods. The system prompt calls for one initial method. In related Layer-1 tasks that depend on subtle acoustics, pitch gave the strongest balance of acoustic retention and anonymity, while Resyn performed worst. Choose transcription, pitch conversion, then evaluation.",
+    "formant_lpc: The user requested a comparison of all methods to summarize the results. Methods tried so far: pitch. Continue with the methods that have not been tried.",
+    "formant_spec: The user requested a comparison of all methods to summarize the results. Methods tried so far: pitch, formant_lpc. Still to try: formant_spec, NeuralVC, Resyn.",
+    "NeuralVC: The user requested a comparison of all methods to summarize the results. Methods tried so far: pitch, formant_lpc, formant_spec. Still to try: NeuralVC, Resyn.",
+    "Resyn: The user requested a comparison of all methods to summarize the results. Methods tried so far: pitch, formant_lpc, formant_spec, NeuralVC. Still to try: Resyn."
   ],
   "artifacts": {
     "agent_result": "/path/to/data/Crisis/anonymise/output/agent_result.json",
     "log": "/path/to/data/Crisis/anonymise/output/logs/reflexion_20260930-192203.log"
   },
   "metrics_synced": {
-    "source": "docs/table.md（用户 2026-10-04 整理版）",
+    "source": "docs/table.md (user-curated 2026-10-04 edition)",
     "date": "2026-10-04",
     "p_value": {
-      "source": "docs/table.md p-value 列",
+      "source": "p-value column in docs/table.md",
       "date": "2026-10-04"
     }
   }

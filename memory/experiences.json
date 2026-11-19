@@ -12,8 +12,8 @@
       "downstream_task": "Alzheimer's disease detection using Cookie Theft picture-description task recordings",
       "language": "English",
       "n_speakers": 156,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在阿尔茨海默病检测（Cookie Theft任务）中，Resyn（TTS重合成）是最佳选择。虽然其韵律保留极差（pit_pcc=0.045），但凭借极高的可懂度（wer=0.025, cer=0.0135）和自然度（mos=3.83），实现了最佳的匿名效果（eer=53.6，最接近50%理想值），且下游性能（bacc=0.754）几乎无损于基线（0.757）。相比之下，NeuralVC（神经声线转换）虽保留了部分韵律（pit_pcc=0.297），但可懂度较差（wer=0.353）且自然度低（mos=1.88），导致匿名效果略逊（eer=51.3）。信号处理方法中，formant_spec 的匿名效果最差（eer=14.8，远低于50%，表明身份极易被识别），尽管其可懂度尚可（wer=0.177）；pitch 和 formant_lpc 的匿名效果也一般（eer分别为31.2和36.1）。因此，对于此类依赖语音内容理解且对身份泄露敏感的任务，完全重合成（Resyn）能有效切断声学身份线索，同时通过高质量TTS保证临床特征的可提取性。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For Alzheimer's disease detection using the Cookie Theft task, Resyn (TTS resynthesis) is the best choice. Prosody retention is poor (pit_pcc=0.045), but its high intelligibility (WER=0.025, CER=0.0135) and naturalness (MOS=3.83) accompany the strongest anonymization result (EER=53.6, closest to the 50% target as characterized in this record) and almost unchanged downstream performance (BACC 0.754 vs. baseline 0.757). NeuralVC retains some prosody (pit_pcc=0.297), with lower intelligibility (WER=0.353), naturalness (MOS=1.88), and a recorded EER of 51.3. Among signal-processing methods, formant_spec offers the weakest protection (EER=14.8), despite reasonable intelligibility (WER=0.177). Pitch and formant_lpc provide modest protection (EER 31.2 and 36.1, respectively). For a task that depends on understanding speech and is sensitive to identity disclosure, Resyn removes acoustic identity cues while high-quality TTS preserves clinically usable information.",
       "recommended_method": "Resyn",
       "avoid_methods": [
         "formant_spec"
@@ -41,11 +41,11 @@
       "evidence_level": null,
       "dataset": "Crisis",
       "aliases": [],
-      "downstream_task": "心理危机风险检测",
+      "downstream_task": "Psychological crisis risk detection",
       "language": "Mandarin Chinese",
       "n_speakers": null,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在心理危机风险检测任务中，NeuralVC（神经声线转换）是最佳选择。它实现了接近理想的匿名效果（EER=49.5%，极接近50%），同时最大程度地保留了下游任务所需的韵律和情感特征，使得下游BACC保持在0.738，仅比基线（0.765）轻微下降，且情感相似度（emo=0.955）和信噪比（SNR=40.4dB）均表现优异。相比之下，Resyn（TTS重合成）虽然匿名效果最好（EER=51.5%）且自然度最高（MOS=2.22），但由于彻底重构了声学特征，导致情感相似度大幅下跌至0.852，韵律相关性丧失（pit_pcc≈0），致使下游BACC严重跌至0.633，不可接受。信号处理方法（如formant_spec, formant_lpc）虽然保留了部分韵律，但匿名效果较差（EER分别为18.7%和22%，远低于50%），意味着身份泄露风险高，且formant_spec的下游性能也较差（BACC=0.676）。因此，对于依赖细粒度情感韵律的危机检测，应首选能保留韵律结构的NeuralVC，避免使用破坏性强的TTS重合成。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "NeuralVC is the best choice for psychological crisis risk detection. Its EER is close to the 50% target (49.5%), and it retains prosody and emotion, keeping downstream BACC at 0.738 vs. the 0.765 baseline. Emotional similarity (emo=0.955) and SNR (40.4 dB) are also high. Resyn offers the strongest reported anonymization (EER=51.5%) and highest naturalness (MOS=2.22), but resynthesis reduces emotional similarity to 0.852, nearly eliminates prosodic correlation (pit_pcc≈0), and drops BACC to 0.633. Formant_spec and formant_lpc retain some prosody but leave substantial identity exposure (EER 18.7% and 22%). Formant_spec also has low BACC (0.676). Prefer NeuralVC for this task, which depends on fine-grained emotional prosody.",
       "recommended_method": "NeuralVC",
       "avoid_methods": [
         "Resyn"
@@ -76,8 +76,8 @@
       "downstream_task": "picture-elicited story generation",
       "language": "English",
       "n_speakers": 352,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在ENNI数据集的picture-elicited story generation（图片诱导故事生成）任务中，信号处理方法在保持下游任务性能方面显著优于重合成和神经声线转换方法。具体而言，pitch变换（信号处理）取得了最高的下游平衡准确率（downstream_bacc=0.831），最接近原始基线（0.849），且EER为46.7%（接近50%，表明良好的匿名效果）。相比之下，Resyn（TTS重合成）虽然EER达到理想的50%（完美匿名）且MOS最高（4.28），但其下游任务性能显著下降（downstream_bacc=0.754），这是因为TTS重合成彻底改变了声学特征，破坏了故事生成模型所依赖的韵律和内容连贯性线索。NeuralVC（神经声线转换）表现较差，下游bacc仅为0.81，且Pit_L1极高（11.9），说明其韵律失真严重，尽管其EER为48.9%（接近50%），但下游性能损失较大。formant_lpc和formant_spec作为信号处理方法，下游bacc分别为0.824和0.822，也优于Resyn和NeuralVC。因此，对于此类依赖语音自然度和韵律结构的开放式生成任务，优先选择对原始波形扰动较小的信号处理方法（如pitch），避免使用会彻底重构语音的TTS重合成方法（Resyn）或韵律失真严重的神经声线转换方法（NeuralVC），除非匿名性是绝对首要目标且可接受较大的下游性能损失。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For picture-elicited story generation in ENNI, signal-processing methods preserve downstream performance best. Pitch gives the highest downstream BACC (0.831 vs. the 0.849 baseline) and an EER of 46.7%. Resyn attains an EER of 50% and the highest MOS (4.28), but BACC falls to 0.754 as resynthesis disrupts acoustic cues to prosody and narrative coherence. NeuralVC has BACC 0.81 and a high prosodic error (Pit_L1=11.9), despite EER 48.9%. Formant_lpc and formant_spec achieve BACC 0.824 and 0.822. Prefer a less disruptive signal-processing method such as pitch for this open-ended task. Consider Resyn or NeuralVC when anonymization is paramount and the downstream performance loss is acceptable.",
       "recommended_method": "pitch",
       "avoid_methods": [
         "Resyn",
@@ -109,8 +109,8 @@
       "downstream_task": "cognitive assessment",
       "language": "Spanish",
       "n_speakers": 357,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在Ivanova数据集的Spanish认知评估（cognitive assessment）任务中，基线bacc为0.448。对比五种方法：1. 信号处理方法中，formant_lpc表现最佳（bacc=0.503, f1=0.476），优于基线，且EER为40.0%（虽偏离50%但相对其他方法更接近，匿名效果尚可），但MOS较低（1.25）；formant_spec和pitch的bacc均低于基线（分别为0.421和0.396），其中pitch的EER为36.7%（偏离50%较远，匿名效果较差）。2. 神经声线转换NeuralVC的bacc为0.399（低于基线），EER为43.3%（偏离50%，匿名效果一般），MOS为1.72。3. TTS重合成Resyn的bacc最低（0.396），EER为45.0%（最接近50%，匿名效果最好），尽管其MOS最高（3.22）且WER最低（0.099），但其韵律保留极差（pit_pcc=0.036），严重损害了下游认知评估所需的韵律特征，导致下游性能显著下降。综上，对于依赖韵律信息的认知评估任务，信号处理方法formant_lpc在保持下游性能（甚至提升）和匿名性之间取得了最佳平衡，而TTS重合成因破坏韵律结构导致下游性能显著下降，应避免使用。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For the Spanish cognitive assessment task in Ivanova, baseline BACC is 0.448. Among signal-processing methods, formant_lpc performs best (BACC=0.503, F1=0.476, EER=40.0%, MOS=1.25). Formant_spec and pitch fall below the baseline (BACC=0.421 and 0.396, respectively), and pitch has EER 36.7%. NeuralVC has BACC 0.399, EER 43.3%, and MOS 1.72. Resyn has BACC 0.396 and the EER closest to the 50% target (45.0%), with the highest MOS (3.22) and lowest WER (0.099). Its low prosodic correlation (pit_pcc=0.036) harms a task that relies on prosody. Formant_lpc offers the best privacy–utility balance for this task.",
       "recommended_method": "formant_lpc",
       "avoid_methods": [
         "Resyn",
@@ -142,8 +142,8 @@
       "downstream_task": "clinical speech dataset for depression detection",
       "language": "Mandarin Chinese",
       "n_speakers": 52,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在基于MODMA数据集的中文抑郁检测任务中，Resyn（TTS重合成）表现最佳。其下游平衡准确率（0.842）显著高于原始基线（0.782），且字符错误率最低（0.04），语音自然度最高（MOS 3.23），表明TTS重合成在保留临床语音特征的同时有效实现了匿名。相比之下，NeuralVC（神经声线转换）虽然EER接近50%（44.5%），匿名效果较好，但其韵律保持极差（pit_pcc 0.07，pit_l1 5.06），导致下游性能（0.773）低于基线，说明过度改变韵律会损害抑郁检测所需的声学线索。信号处理方法中，pitch（F0变换）的EER为56.7%，偏离50%较远，身份泄露风险高，且CER高达0.204，严重影响可懂度；formant_lpc和formant_spec的EER分别为13.9%和16.3%，远低于50%，表明身份特征极易被识别，匿名安全性严重不足。因此，对于需要高可懂度、良好匿名性及保留关键韵律特征的临床抑郁检测任务，TTS重合成（Resyn）是优于神经VC和信号处理的方法。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "Resyn performs best for Mandarin depression detection on MODMA. Downstream BACC rises from 0.782 to 0.842, and Resyn has the lowest CER (0.04) and highest MOS (3.23), indicating that resynthesis retains useful clinical speech features. NeuralVC offers EER 44.5% but poor prosody retention (pit_pcc=0.07, pit_l1=5.06), with BACC below baseline (0.773). Pitch gives EER 56.7% and CER 0.204. Formant_lpc and formant_spec leave substantial identity exposure (EER 13.9% and 16.3%). Prefer Resyn when intelligibility, privacy, and clinically relevant speech features are all important.",
       "recommended_method": "Resyn",
       "avoid_methods": [
         "pitch",
@@ -176,8 +176,8 @@
       "downstream_task": "cognitive assessment",
       "language": "Mandarin Chinese",
       "n_speakers": 175,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在NCMMSC-AD数据集的认知评估（cognitive assessment，通常关联痴呆/认知障碍检测）任务中，Resyn（TTS重合成）是最佳选择。虽然其下游平衡准确率（0.687）略低于基线（0.709），但它是唯一在保持极高可懂度（CER=0.048）的同时，实现有效匿名（EER=47.9%，接近理想值50%）的方法。相比之下，pitch（信号处理）虽然EER为57.6%（偏离50%意味着身份仍可被识别，且方向相反），但严重损害了可懂度（CER=0.404）且导致下游性能下降；NeuralVC（神经声线转换）虽保留了较好的韵律结构（pit_pcc=0.128优于Resyn的0.012），但其EER仅为46.7%且CER高达0.365，匿名效果不如Resyn彻底，且可懂度损失较大。formant系列方法（formant_lpc/formant_spec）虽然可懂度较好，但EER极低（14.7%/19%），意味着身份极易被识别，完全不适合匿名需求。因此，对于需要严格匿名且对文本内容准确性要求高的认知评估任务，应优先选用Resyn这类TTS重合成方法，以牺牲少量韵律保真度换取极致的匿名性和可懂度。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For cognitive assessment on NCMMSC-AD, Resyn provides the best balance. Its BACC of 0.687 is slightly below the 0.709 baseline, while it combines high intelligibility (CER=0.048) and EER close to 50% (47.9%). Pitch gives EER 57.6%, high CER (0.404), and reduced downstream performance. NeuralVC preserves more prosodic structure (pit_pcc=0.128 vs. 0.012 for Resyn), but has EER 46.7% and CER 0.365. The formant methods give better intelligibility than some alternatives but expose identity (EER 14.7% and 19%). Prefer Resyn for cognitive assessment that requires strong anonymization and accurate verbal content, with some loss of prosodic fidelity.",
       "recommended_method": "Resyn",
       "avoid_methods": [
         "formant_lpc",
@@ -209,8 +209,8 @@
       "downstream_task": "Parkinson's disease detection",
       "language": "Spanish",
       "n_speakers": 112,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在帕金森病检测任务中，核心挑战在于平衡匿名度与保留细微声学病理特征。信号处理方法（formant_lpc, formant_spec, pitch）通过局部修改保留原始波形结构，其中 formant_lpc 表现最佳，其下游平衡准确率 (0.85) 最接近基线 (0.862)，且 EER (27.1%) 提供了中等程度的匿名保护。NeuralVC 作为神经声线转换方法，虽然 EER 高达 48.1%（接近理想匿名值 50%），但其对韵律结构的显著改变（pit_pcc 降至 0.315）导致下游性能轻微下降至 0.843，仍具可用性。相比之下，Resyn 作为 TTS 重合成方法，虽然实现了最高的匿名度（EER 48.6%）和自然度（MOS 3.58），但由于完全重新生成语音，彻底破坏了用于疾病诊断的细微声学特征，导致下游平衡准确率暴跌至 0.515，远低于基线，因此在依赖声学病理特征的医学检测任务中不可用。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "Parkinson's disease detection requires a balance between anonymity and preservation of subtle pathological acoustic cues. Formant_lpc performs best among local waveform modifications. It has BACC 0.85, closest to baseline 0.862, and intermediate protection (EER=27.1%). NeuralVC has EER 48.1%, alters prosody (pit_pcc=0.315), and yields a still-usable BACC of 0.843. Resyn has the highest recorded privacy and naturalness (EER=48.6%, MOS=3.58), but resynthesis removes diagnostic acoustic cues and causes BACC to fall to 0.515. It is unsuitable here when detection depends on those cues.",
       "recommended_method": "formant_lpc",
       "avoid_methods": [
         "Resyn"
@@ -243,8 +243,8 @@
       "downstream_task": "cleft-palate speech assessment",
       "language": "Mandarin Chinese",
       "n_speakers": 244,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在腭裂语音评估（cleft-palate speech assessment）任务中，核心矛盾在于隐私保护（EER接近50%）与临床诊断准确性（downstream_bacc接近基线0.699）之间的权衡。信号处理方法（formant_lpc, formant_spec, pitch）虽然能较好保留下游性能（bacc 0.64-0.69），但匿名效果极差（EER 11.9%-34.9%，远低于50%的理想值），无法有效隐藏说话人身份。Resyn（TTS重合成）虽然提供了良好的匿名性（EER 44.0%）和最高的自然度（MOS 2.49），但由于完全重新生成语音，彻底破坏了原始韵律结构（pit_pcc 0.004）和声学特征，导致下游诊断性能大幅崩塌（bacc 0.526，远低于基线），不可用于此类依赖声学细节的临床评估。NeuralVC（神经声线转换）是最佳选择：它在保持极高匿名性（EER 48.8%，几乎达到随机猜测水平）的同时，最大程度地保留了韵律结构（pit_pcc 0.214，远高于Resyn）和下游诊断能力（bacc 0.641，仅比基线低约0.06，且优于其他高匿名方法）。尽管其CER（0.241）较高，但在该特定临床任务中，保留韵律和声学特征对诊断至关重要，因此NeuralVC在隐私与效用间取得了最优平衡。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "Cleft-palate speech assessment trades off privacy (EER near 50%) against diagnostic accuracy (baseline BACC 0.699). Signal processing retains much of the diagnostic performance (BACC 0.64–0.69), but leaves identity exposed (EER 11.9%–34.9%). Resyn gives EER 44.0% and the highest MOS (2.49), but alters prosody (pit_pcc=0.004) and acoustics so much that BACC drops to 0.526. NeuralVC offers the best balance, with EER 48.8%, prosodic correlation 0.214, and BACC 0.641, about 0.06 below baseline and above the other strong-anonymization options. Its CER is high (0.241). Prosody and acoustic structure matter most for this clinical assessment.",
       "recommended_method": "NeuralVC",
       "avoid_methods": [
         "Resyn",
@@ -278,8 +278,8 @@
       "downstream_task": "pathological-voice detection / voice-disorder classification",
       "language": "German",
       "n_speakers": 424,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在病理声音检测（voice_pathology）任务中，存在显著的‘匿名性-诊断准确性’权衡。信号处理方法（formant_lpc, formant_spec, pitch）虽能较好保留原始声学特征，维持较高的下游任务性能（formant_spec bacc=0.693, pitch bacc=0.665，接近基线 0.715），但匿名效果较差（EER 分别为 24.2% 和 42.2%，远低于理想的 50%），表明说话人身份仍易被识别。相比之下，彻底改变声学特征的方法实现了极佳的匿名效果：Resyn（TTS 重合成）EER 达 51.7%，NeuralVC（神经声线转换）EER 达 51%，均接近随机猜测水平。然而，这种高匿名性以牺牲下游任务性能为代价：Resyn 因韵律相关性极低（pit_pcc=0.068）导致下游 bacc 降至 0.488，严重破坏病理诊断线索；NeuralVC 虽保留了部分韵律结构（pit_pcc=0.443），下游 bacc 为 0.656，但仍低于信号处理方法。若首要目标是匿名，Resyn 是最佳选择；若需平衡匿名与诊断准确性，NeuralVC 优于 Resyn，但整体性能仍不及信号处理方法。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "Pathological-voice detection shows a privacy–accuracy trade-off. Signal processing retains acoustic cues and keeps BACC high (formant_spec=0.693 and pitch=0.665 vs. baseline 0.715), but offers weaker anonymity (respective EERs 24.2% and 42.2%). Resyn and NeuralVC reach EERs of 51.7% and 51%, near random guessing. Resyn has low prosodic correlation (pit_pcc=0.068) and BACC falls to 0.488, indicating major loss of diagnostic cues. NeuralVC retains some prosody (pit_pcc=0.443) and yields BACC 0.656. Prefer Resyn when privacy dominates, or NeuralVC to balance privacy and diagnosis. Signal processing retains the most downstream utility in this comparison.",
       "recommended_method": "Resyn",
       "avoid_methods": [
         "formant_lpc",
@@ -312,8 +312,8 @@
       "downstream_task": "pathological-voice detection",
       "language": "German",
       "n_speakers": 280,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在病理声音检测（pathological-voice detection）任务中，信号处理方法（如 pitch, formant_spec）能较好地保留原始声学特征，从而维持较高的下游任务性能（pitch 的 bacc=0.814 甚至略高于基线 0.807），但其匿名效果较差（EER 分别为 43.8% 和 22.1%，偏离理想值 50%）。NeuralVC 作为神经声线转换方法，虽然提升了匿名性（EER=46%），但显著破坏了下游任务所需的病理特征，导致性能大幅下降（bacc=0.739）。Resyn 作为 TTS 重合成方法，虽然实现了最佳的匿名效果（EER=52.6%，接近随机猜测水平）和最高的自然度（MOS=3.24），但由于语音完全重新生成，彻底丢失了原始的病理声学线索，导致下游任务性能崩溃（bacc=0.489，远低于基线）。因此，对于依赖原始声学细微特征的病理检测任务，若需兼顾匿名与下游性能，应避免使用完全重合成方法；若首要目标是强匿名且可接受下游性能损失，Resyn 是唯一达到高匿名标准的方法，但需权衡业务需求。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For pathological-voice detection, pitch and formant_spec preserve original acoustic cues. Pitch BACC is 0.814 vs. the 0.807 baseline, while respective EERs are 43.8% and 22.1%. NeuralVC improves EER to 46% but degrades diagnostic cues (BACC=0.739). Resyn attains the best reported anonymity (EER=52.6%) and naturalness (MOS=3.24), but removes pathological cues and drops BACC to 0.489. Avoid full resynthesis when downstream detection remains important. Resyn offers strong anonymity when a major diagnostic performance loss is acceptable.",
       "recommended_method": "pitch",
       "avoid_methods": [
         "Resyn"
@@ -344,8 +344,8 @@
       "downstream_task": "pathological-voice detection",
       "language": "German",
       "n_speakers": 424,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在病理声音检测（pathological-voice detection）任务中，信号处理方法（如 formant_lpc, formant_spec, pitch）能较好地保留原始声学特征，从而维持较高的下游任务性能（formant_lpc bacc=0.894, formant_spec bacc=0.877, pitch bacc=0.87），但匿名效果较差（EER 分别为 23.4%, 20%, 39.7%，均显著低于50%，意味着身份仍易被识别）。NeuralVC 作为神经声线转换方法，虽然匿名效果极佳（EER=50%），但严重破坏了病理特征，导致下游性能大幅下降（bacc=0.83）。Resyn 作为 TTS 重合成方法，虽然实现了近乎完美的匿名（EER=49.3%）和高自然度（mos=3.22），但由于完全重新生成了语音，彻底丢失了原始的病理声学线索，导致下游任务性能崩溃（bacc=0.473，远低于基线 0.901）。因此，对于依赖原始声学细微特征的病理检测任务，若需兼顾匿名与下游性能，应避免使用完全重合成方法；若必须高匿名，需接受下游性能的大幅损失。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For pathological-voice detection, signal processing retains diagnostic acoustic cues (formant_lpc BACC 0.894, formant_spec 0.877, pitch 0.87). EERs of 23.4%, 20%, and 39.7%, respectively, indicate residual speaker identifiability. NeuralVC achieves EER 50%, but BACC falls to 0.83. Resyn has EER 49.3% and MOS 3.22, but full speech regeneration removes diagnostic cues and BACC falls to 0.473 vs. the 0.901 baseline. Prefer approaches that retain original acoustic details when downstream utility matters. High anonymity entails a substantial utility loss in this comparison.",
       "recommended_method": "formant_lpc",
       "avoid_methods": [
         "Resyn"
@@ -376,8 +376,8 @@
       "downstream_task": "suicidal thoughts or behaviours detection",
       "language": "Mandarin Chinese",
       "n_speakers": 1223,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在自杀意念或行为检测（Suicide-YF数据集）任务中，Resyn（TTS重合成）是最佳选择。其下游平衡准确率（0.663）最接近原始基线（0.668），且字符错误率极低（0.02），表明TTS重合成能最大程度保留语义信息以支持下游分类。虽然其EER为41.2%（偏离50%理想值，说明仍有部分身份残留），但在所有方法中综合表现最优。相比之下，信号处理方法（pitch, formant_lpc, formant_spec）虽然保留了原始韵律结构，但导致下游性能显著下降（bacc降至0.60-0.65区间），且EER严重偏离50%（如formant_lpc的EER仅为18%，说明身份极易被识别；pitch的EER为52.3%虽接近50%但下游性能最差），说明音质受损或身份特征残留影响了下游模型。NeuralVC（神经声线转换）虽然MOS较高（1.82）且EER为46.7%（较接近50%），但字符错误率较高（0.336）且韵律相关性极低（pit_pcc=0.126），导致下游性能（0.629）不如Resyn。因此，对于依赖语义和细粒度声学特征的心理健康风险检测任务，优先选择能完美保留文本内容的TTS重合成方法，避免使用破坏韵律结构或引入高CER的信号处理及神经VC方法。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "Resyn is the best overall choice for detecting suicidal thoughts or behaviours on Suicide-YF. It gives BACC 0.663 vs. the 0.668 baseline and CER 0.02, preserving semantic information for classification. EER is 41.2%, indicating some residual identity cues. Pitch, formant_lpc, and formant_spec retain prosodic structure, but BACC falls to the 0.60–0.65 range. Formant_lpc exposes identity (EER=18%), and pitch reaches EER 52.3% with the lowest downstream performance. NeuralVC gives MOS 1.82 and EER 46.7%, but CER 0.336 and low prosodic correlation (pit_pcc=0.126) accompany lower BACC (0.629). Prefer TTS resynthesis when retaining verbal information is important for mental-health risk detection.",
       "recommended_method": "Resyn",
       "avoid_methods": [
         "formant_lpc",
@@ -408,11 +408,11 @@
       "evidence_level": null,
       "dataset": "Androids-Corpus-I",
       "aliases": [],
-      "downstream_task": "区分健康对照组(HC)与抑郁症相关障碍患者(PT)",
+      "downstream_task": "Distinguish healthy controls (HC) from patients with depression-related disorders (PT)",
       "language": "Italian",
       "n_speakers": 118,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在基于意大利语Androids-Corpus-I进行抑郁症（PT）与健康对照（HC）的语音分类任务中，基线平衡准确率为0.853。实验对比了五种匿名方法：1. 信号处理方法（pitch, formant_lpc, formant_spec）虽然保留了部分下游任务性能（bacc分别为0.852, 0.8, 0.825），但匿名效果极差，EER分别为31.9%, 36.2%, 17.7%，均远低于50%的理想值，表明说话人身份特征未被有效去除，不适合高隐私需求场景。2. NeuralVC（神经声线转换）实现了最佳匿名效果（EER=48.3%，最接近50%），但其代价是可懂度显著下降（WER=0.258, CER=0.167）以及下游任务性能严重受损（bacc=0.774，低于基线），且自然度一般（MOS=1.72）。3. Resyn（TTS重合成）通过完全重新生成语音，在保持极高可懂度（WER=0.021, CER=0.012）和较好自然度（MOS=2.44）的同时，将EER提升至43.1%，实现了良好的匿名效果。尽管其下游bacc（0.896）略高于基线，但考虑到其卓越的匿名性和可懂度平衡，Resyn是该类临床辅助诊断任务的最优选择。综上，对于需要高匿名度且对可懂度有严格要求的抑郁检测任务，推荐采用TTS重合成方法（Resyn），避免使用仅做信号处理的方法及导致可懂度大幅下降的NeuralVC。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "For classification of Italian depression-related disorders (PT) versus healthy controls (HC), baseline BACC is 0.853. Pitch, formant_lpc, and formant_spec yield BACC 0.852, 0.8, and 0.825, but EER 31.9%, 36.2%, and 17.7%, respectively, indicates substantial identity exposure. NeuralVC gives the highest anonymization result (EER=48.3%) with lower intelligibility (WER=0.258, CER=0.167), MOS 1.72, and reduced BACC (0.774). Resyn gives EER 43.1%, high intelligibility (WER=0.021, CER=0.012), MOS 2.44, and BACC 0.896, above baseline. Prefer Resyn when this clinical task requires privacy and accurate verbal content.",
       "recommended_method": "Resyn",
       "avoid_methods": [
         "pitch",
@@ -443,11 +443,11 @@
       "evidence_level": null,
       "dataset": "Androids-Corpus-R",
       "aliases": [],
-      "downstream_task": "区分健康对照组(HC)与抑郁症相关障碍患者(PT)",
+      "downstream_task": "Distinguish healthy controls (HC) from patients with depression-related disorders (PT)",
       "language": "Italian",
       "n_speakers": 118,
-      "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
-      "lesson": "在基于Androids-Corpus-R的抑郁症检测任务中，神经声线转换（NeuralVC）是最佳选择。其EER达到50.9%，最接近理想匿名值50%，表明说话人身份特征被有效消除，且下游平衡准确率（0.724）高于基线（0.699），证明其在去除身份的同时保留了足够的病理声学特征用于疾病分类。相比之下，TTS重合成方法（Resyn）虽然EER也较高（46%），但下游性能严重退化（bacc=0.516），说明完全重新生成的语音丢失了关键的临床诊断信息。信号处理方法（如formant_spec, pitch, formant_lpc）虽然保留了部分韵律结构，但EER较低（23.2%-35.3%），意味着身份泄露风险高，且formant_spec甚至导致下游性能优于基线（0.745），这暗示该任务可能过度依赖了未被充分匿名的身份相关声学特征，不符合匿名化初衷。因此，对于需要兼顾高匿名度和下游诊断性能的医疗语音任务，应优先选用能保留内容韵律但彻底改变音色身份的NeuralVC，避免使用会破坏病理特征的TTS重合成或匿名不彻底的信号处理方法。",
+      "goal": "Keep the spoken content and evaluate all methods to summarize what works for this task.",
+      "lesson": "NeuralVC is the preferred method for depression detection on Androids-Corpus-R. Its EER of 50.9% is closest to the 50% target and BACC exceeds baseline (0.724 vs. 0.699), indicating preservation of useful pathological acoustic features. Resyn has EER 46% but BACC 0.516, consistent with loss of clinical cues during resynthesis. Signal processing preserves some prosodic structure but exposes more identity information (EER 23.2%–35.3%). Formant_spec reaches BACC 0.745. The historical assessment interprets that improvement as possible reliance on insufficiently anonymized speaker cues. Prefer NeuralVC when this task requires both strong anonymization and diagnostic utility.",
       "recommended_method": "NeuralVC",
       "avoid_methods": [
         "Resyn",

@@ -268,12 +268,10 @@ def _load_trans(path: Path) -> List[dict]:
 
 
 def _load_mask(path: Path) -> List[dict]:
-    if not path.exists():
-        return []
     with open(path, "r", encoding="utf-8") as f:
         raw = json.load(f)
     if not isinstance(raw, list):
-        return []
+        raise ValueError(f"Invalid content mask in {path}: expected a list")
     return raw
 
 
@@ -290,10 +288,7 @@ def _tts_mask_dir_resolved(
         return None
     md = str(mask_dir).strip()
     if not os.path.isdir(md):
-        logger.warning(
-            f"{pipeline_name}: mask_dir 不是有效目录 {mask_dir!r}，按转录原文合成（不做敏感词替换）"
-        )
-        return None
+        raise ValueError(f"{pipeline_name}: content mask directory does not exist: {mask_dir}")
     return md
 
 
@@ -310,7 +305,7 @@ def _build_sentence_mask_words(mask_items: List[dict]) -> Dict[int, List[str]]:
         except Exception:
             continue
         word = str(item.get("text", "")).strip()
-        if not word or word == "None" or word.startswith("识别到隐私词"):
+        if idx < 0 or not word or word == "None" or word.startswith("识别到隐私词"):
             continue
         out.setdefault(idx, []).append(word)
     return out
