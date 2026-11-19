@@ -239,3 +239,136 @@ def test_masking_failure_blocks_combined_conversion(tmp_path):
     assert agent._execute_step.call_count == 2
     assert result['steps_results'][-1]['step'] == 'run_voice_conversion'
     assert not result['steps_results'][-1]['ok']
+
+
+@pytest.mark.parametrize('fenced', [False, True])
+def test_planner_uses_complete_plan_after_parameter_object(tmp_path, fenced):
+    from casa_downstream import CASA, _validate_plan
+
+    agent = CASA(str(tmp_path), str(tmp_path/'out'), str(tmp_path/'mid'), use_memory=False)
+    snippets = ['{"method":"pitch"}', '{"steps":[{"tool":"run_voice_conversion","params":{"method":"pitch"}}]}']
+    if fenced:
+        snippets = [f"```json\n{snippet}\n```" for snippet in snippets]
+    agent._call_llm = Mock(return_value='\n'.join(snippets))
+    result = agent._call_llm_with_retry('Plan.', 'Voice anonymization.', validator=_validate_plan)
+    assert result['steps'][0]['params']['vc_params'] == {'n_steps': -3.0}
+    agent._call_llm.assert_called_once()
+
+
+def test_demo_recall_uses_both_layers_for_related_tasks_only():
+    from demo.demo import DemoCASA, ROOT
+    from utils.agent_memory import TwoLayerMemory
+
+    memory = TwoLayerMemory(root=str(ROOT/'memory'))
+    unrelated = memory.recall_for_prompt({'task_type': 'other'}, focused=DemoCASA.focused_memory)
+    assert unrelated == ''
+    related = memory.recall_for_prompt({'task_type': 'dementia'}, focused=DemoCASA.focused_memory)
+    assert 'Layer-1' in related and 'Layer-2' in related and 'ADReSS' in related
+    assert 'Saar-HD' not in related
+
+
+def test_planner_retries_with_distinct_shape_guidance(tmp_path, caplog):
+    from casa_downstream import CASA, _validate_plan
+
+    agent = CASA(str(tmp_path), str(tmp_path/'out'), str(tmp_path/'mid'), use_memory=False)
+    bad = '{"task_type":"other"}'
+    valid = '{"steps":[{"tool":"run_voice_conversion","params":{"method":"pitch"}}]}'
+    agent._call_llm = Mock(side_effect=[bad, bad, valid])
+    assert agent._call_llm_with_retry('Plan.', 'Mask and anonymize.', validator=_validate_plan)['steps']
+    prompts = [call.args[1] for call in agent._call_llm.call_args_list]
+    assert len(set(prompts)) == 3
+    assert 'nonempty steps array' in prompts[1]
+    assert 'Omit examples' in prompts[2]
+    assert "JSON keys: [['task_type']]" in caplog.text
+
+
+def test_empty_mask_does_not_alter_audio(tmp_path):
+    import numpy as np
+    import soundfile as sf
+    from apply_mask import add_adaptive_ssn_to_audio
+
+    wave = tmp_path / 'sample.wav'
+    output = tmp_path / 'out.wav'
+    mask = tmp_path / 'sample.json'
+    sf.write(wave, np.full(1600, 0.25), 16000)
+    for content in ([], [{'idx': -1, 'start': 0, 'end': 0}]):
+        mask.write_text(json.dumps(content))
+        add_adaptive_ssn_to_audio(str(wave), str(mask), str(output), noise_method='mute', time_append=50)
+        assert np.array_equal(sf.read(wave)[0], sf.read(output)[0])
+
+
+def test_invalid_privacy_response_is_not_cached_as_clear(tmp_path, monkeypatch):
+    from mask_llm import mask_llm
+
+    trans = tmp_path / 'trans' / 'nested'
+    trans.mkdir(parents=True)
+    (trans / 'example.json').write_text(json.dumps([
+        {'index': 0, 'text': 'Call Sample.', 'timestamp': [0, 100, 300]},
+    ]))
+    monkeypatch.setattr('utils.language_model.load_model', Mock(return_value=(None, None)))
+    infer = Mock(return_value='No tagged result')
+    monkeypatch.setattr('utils.language_model.generate_response', infer)
+    mask_llm(str(trans.parent), str(tmp_path/'mask'), Mock(), language='en')
+    assert infer.call_count == 2
+    assert not (tmp_path/'mask'/'nested'/'example.json').exists()
+
+
+def test_nested_content_mask_reaches_text_only_and_combined_audio(tmp_path, monkeypatch):
+    import numpy as np
+    import soundfile as sf
+    import casa_downstream as runtime
+
+    source = tmp_path / 'input' / 'nested' / 'example.wav'
+    source.parent.mkdir(parents=True)
+    sr = 16000
+    sf.write(source, 0.2 * np.sin(2 * np.pi * 220 * np.arange(sr) / sr), sr)
+    agent = runtime.CASA(str(source.parents[1]), str(tmp_path/'out'), str(tmp_path/'mid'), use_memory=False)
+    transcript = Path(agent.ctx.trans_origin_dir) / 'nested' / 'example.json'
+    transcript.parent.mkdir(parents=True)
+    transcript.write_text(json.dumps({'sentences': [
+        {'index': 0, 'text': 'Call Sample today.', 'timestamp': [0, 250, 600, 1000]},
+    ]}))
+    monkeypatch.setattr(runtime, 'run_in_isolation', lambda func, *args, conda_env=None: func(*args))
+    monkeypatch.setattr('utils.language_model.load_model', Mock(return_value=(None, None)))
+    monkeypatch.setattr('utils.language_model.generate_response', Mock(return_value='<result>sample</result>'))
+    monkeypatch.setattr('utils.metrics.spk_audio_extractor.extract_dir', Mock())
+
+    result = agent._execute_plan({'steps': [
+        {'tool': 'run_mask', 'params': {'language': 'en', 'mask_method': 'mute'}},
+        {'tool': 'run_voice_conversion', 'params': {'method': 'pitch', 'language': 'en'}},
+    ]})
+    assert result['success']
+    assert (Path(agent.ctx.mask_dir) / 'nested' / 'example.json').is_file()
+    for directory in ('text_only', 'text+pitch'):
+        audio, _ = sf.read(tmp_path/'out'/directory/'nested'/'example.wav')
+        assert np.all(audio[4800:8000] == 0)
+        assert np.max(np.abs(audio[:1600])) > 0.05
+
+
+def test_neuralvc_reports_missing_reference_before_model_load(tmp_path, monkeypatch):
+    from utils.voice_convert import seedvc
+
+    pool = tmp_path/'pool.json'
+    pool.write_text(json.dumps({'22_30': {'female': [{'subject_id': 'a', 'wav_path': 'missing.wav'}]}}))
+    initialize = Mock()
+    monkeypatch.setattr(seedvc, '_load_seedvc_model', initialize)
+    with pytest.raises(ValueError, match='1 missing reference files out of 1'):
+        seedvc.batch_convert_fn(str(tmp_path), str(tmp_path/'out'), Mock(),
+                                aishell_target_pool_path=str(pool), age_gender_model_path=str(tmp_path))
+    initialize.assert_not_called()
+
+
+def test_text_only_plan_previews_masked_audio_without_voice_reflection(tmp_path):
+    from casa_downstream import CASA
+
+    agent = CASA(str(tmp_path/'input'), str(tmp_path/'out'), str(tmp_path/'mid'), use_memory=False)
+    agent._generate_initial_plan = Mock(return_value={
+        'language': 'en', 'steps': [{'tool':'run_mask','params':{'language':'en'}}],
+    })
+    agent.ctx.text_only_dir = str(tmp_path/'out'/'text_only')
+    agent._execute_plan = Mock(return_value={'success': True, 'eval_metrics': {'cer': 0.1}})
+    agent._reflect = Mock()
+    result = agent.run('Mask spoken identifiers only.', max_reflections=3)
+    agent._reflect.assert_not_called()
+    assert result['final_vc_method'] is None
+    assert result['final_audio_dir'] == agent.ctx.text_only_dir

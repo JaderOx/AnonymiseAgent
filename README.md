@@ -18,11 +18,11 @@ CASA takes natural-language requirements, automatically plans the steps, execute
 
 ## Environment Setup
 
-Run the following commands from the repository root. CASA runs in `Agent`, uses `whisperx` for WhisperX transcription, and uses `fishaudio` for Resyn synthesis.
+Run the following commands from the repository root. CASA runs in `agent`, uses `whisperx` for WhisperX transcription, and uses `fishaudio` for Resyn synthesis.
 
 ```bash
-conda create -n Agent -y python=3.10 && conda activate Agent
-python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+conda create -n agent -y python=3.10 && conda activate agent
+python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0
 python -m pip install -r requirements.txt
 
 conda create -n whisperx -y python=3.10 && conda activate whisperx
@@ -34,7 +34,7 @@ mkdir -p models
 git clone --depth 1 --branch v2.0.0-beta https://github.com/fishaudio/fish-speech.git models/fish-speech
 python -m pip install -e 'models/fish-speech[cu128]' python-dotenv pyyaml
 
-conda activate Agent
+conda activate agent
 hf download fishaudio/s2-pro --local-dir models/fish_speech_models/s2-pro
 cp .env.example .env
 ```
@@ -87,7 +87,7 @@ CUDA_VISIBLE_DEVICES=0,1,2 python agent.py \
   -i /path/to/input -o /path/to/output --middle_dir /path/to/middle \
   --trans --language zh \
   --mask --method noise --group_num 30 \
-  --vc --vc_method NeuralVC \
+  --vc --vc_method Resyn \
   --eval --gt_dir /path/to/mask_gt_if_needed.json --subject_map_path /path/to/map_if_needed.json
 ```
 
@@ -176,4 +176,14 @@ python -m pytest tests -q
 Covers memory persistence and recall, VC parameters, final selection, language handling and demo integration. Model and evaluation calls are simulated in tests; full inference requires the environments and models above.
 
 ## Citation
-TODO
+
+Please cite the following paper if you find this reposity useful:
+
+```bibtex
+@article{cui2026task,
+  title={Task-adaptive anonymisation enables privacy-preserving sharing of clinical speech data},
+  author={Cui, Ziyun and Niu, Haoyu and Wu, Wen and Sun, Hao and Zhang, Sihan and Lei, Chang and Zhang, Yun and Sun, Chunyun and Luo, Yang and Cao, Liangliang and others},
+  journal={arXiv preprint arXiv:2611.11273},
+  year={2026}
+}
+```
