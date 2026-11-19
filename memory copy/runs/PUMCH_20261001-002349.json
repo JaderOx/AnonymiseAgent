@@ -1,0 +1,108 @@
+{
+  "run_id": "PUMCH_20261001-002349",
+  "schema_version": 2,
+  "task_type": "articulation_disorder",
+  "task_meta": {
+    "language": "Mandarin Chinese",
+    "n_speakers": 244,
+    "downstream_task": "cleft-palate speech assessment",
+    "goal": "不需要文本匿名，跑所有方法总结处理该类任务的经验",
+    "source": "llm",
+    "warnings": []
+  },
+  "dataset": "PUMCH",
+  "language": "Mandarin Chinese",
+  "request": "PUMCH is an in-house Mandarin Chinese speech dataset for cleft-palate speech assessment, comprising recordings from 244 participants, including 128 patients with cleft palate and 116 healthy controls. 不需要文本匿名，跑所有方法总结处理该类任务的经验",
+  "output_dir": "/path/to/data/PUMCH/anonymise/output",
+  "timestamp": "2026-10-01T00:23:49",
+  "attempts": 5,
+  "final_vc_method": "Resyn",
+  "success": true,
+  "baseline_bacc": 0.699,
+  "final_downstream": {
+    "downstream_bacc": 0.526,
+    "downstream_f1": 0.5147
+  },
+  "downstream_bacc_by_method": null,
+  "vc_results": {
+    "formant_lpc": {
+      "snr_db": 24.55,
+      "cer": 0.154,
+      "emo": 0.954,
+      "pit_l1": 1.628654,
+      "pit_pcc": 0.693,
+      "eer": 21.4,
+      "downstream_bacc": 0.691,
+      "downstream_f1": 0.681,
+      "mos": 1.25,
+      "p_value": 0.445
+    },
+    "formant_spec": {
+      "snr_db": 22.22,
+      "cer": 0.115,
+      "emo": 0.967,
+      "pit_l1": 1.684423,
+      "pit_pcc": 0.934,
+      "eer": 11.899999999999999,
+      "downstream_bacc": 0.648,
+      "downstream_f1": 0.6426,
+      "mos": 1.24,
+      "p_value": 0.055
+    },
+    "pitch": {
+      "snr_db": 22.62,
+      "cer": 0.192,
+      "emo": 0.951,
+      "pit_l1": 3.251429,
+      "pit_pcc": 0.866,
+      "eer": 34.9,
+      "downstream_bacc": 0.644,
+      "downstream_f1": 0.6301,
+      "mos": 1.37,
+      "p_value": 0.058
+    },
+    "NeuralVC": {
+      "snr_db": 41.36,
+      "cer": 0.241,
+      "emo": 0.933,
+      "pit_l1": 7.703696,
+      "pit_pcc": 0.214,
+      "eer": 48.8,
+      "downstream_bacc": 0.641,
+      "downstream_f1": 0.6353,
+      "mos": 1.87,
+      "p_value": 0.045
+    },
+    "Resyn": {
+      "snr_db": 42.12,
+      "cer": 0.045,
+      "emo": 0.935,
+      "pit_l1": 7.946194,
+      "pit_pcc": 0.004,
+      "eer": 44.0,
+      "downstream_bacc": 0.526,
+      "downstream_f1": 0.5147,
+      "mos": 2.49,
+      "p_value": 1.3500000000000001e-05
+    }
+  },
+  "reflections": [
+    "formant_lpc: 用户要求对中文音频进行匿名化处理，不需要文本匿名（即跳过 run_mask），并跑所有方法总结经验。根据历史经验，对于依赖细微声学特征的临床/认知评估任务，信号处理方法（如 formant_lpc, formant_spec, pitch）通常比 TTS 重合成（Resyn）或神经声线转换（NeuralVC）更能保留下游任务所需的声学特征。然而，用户明确要求“跑所有方法”，因此计划中需包含所有可用的声线转换方法（formant_lpc, formant_spec, pitch, NeuralVC, Resyn）。由于 run_voice_conversion 是独立步骤，且 with_mask...",
+    "formant_spec: 用户要求跑所有方法总结经验，目前仅尝试了 formant_lpc，还需继续尝试其他方法",
+    "pitch: 用户要求跑所有方法总结经验，目前已尝试 formant_lpc 和 formant_spec，还剩 pitch, NeuralVC, Resyn 未尝试",
+    "NeuralVC: 用户要求跑所有方法总结经验，目前已尝试 formant_lpc, formant_spec, pitch，还剩 NeuralVC, Resyn 未尝试",
+    "Resyn: 用户要求跑所有方法总结经验，目前已尝试 formant_lpc, formant_spec, pitch, NeuralVC，还剩 Resyn 未尝试"
+  ],
+  "artifacts": {
+    "agent_result": "/path/to/data/PUMCH/anonymise/output/agent_result.json",
+    "log": "/path/to/data/PUMCH/anonymise/output/logs/reflexion_20261001-001519.log"
+  },
+  "metrics_synced": {
+    "source": "docs/table.md（用户 2026-10-04 整理版）",
+    "date": "2026-10-04",
+    "p_value": {
+      "source": "docs/table.md p-value 列",
+      "date": "2026-10-04"
+    }
+  }
+}

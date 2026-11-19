@@ -1,9 +1,14 @@
 """
-批量跑 reflexion agent，收集日志并自动回填 choice/state/log。
+批量跑 CASA，收集日志并自动回填 choice/state/log。
 """
 
 import argparse, json, os, re, sys, subprocess, shutil
 from datetime import datetime
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(PROJECT_ROOT))
+from utils.vc_names import ALIASES, METHODS
 
 # ═══════════════════════════════════════════════════════════════
 # 路径配置
@@ -27,18 +32,17 @@ PATHS = {
     "NeuroVoz":             {"input_dir":"/path/to/data_backup/NeuroVoz/audios","output_dir":"/path/to/data/agent_accuracy/NeuroVoz/output","middle_dir":"/path/to/data/agent_accuracy/NeuroVoz/middle"},
 }
 
-SOURCE_JSON = "/path/to/data/agent_accuracy/reflexion_data_wo_bacc.json"
-AGENT_DIR = "/path/to/Anonymise_Agent"
+SOURCE_JSON = "/path/to/data/agent_accuracy/casa_data_wo_bacc.json"
+AGENT_DIR = str(PROJECT_ROOT)
 
 
 # ═══════════════════════════════════════════════════════════════
 # 方法名标准化
 # ═══════════════════════════════════════════════════════════════
-METHOD_MAP = {
-    "mcadams": "McAdams", "formant": "Formant", "pitch": "Pitch",
-    "combined": "Combined", "seedvc": "SeedVC",
-    "fishaudio_tts": "ASR-TTS"
-}
+METHOD_MAP = {method.lower(): method for method in METHODS}
+METHOD_MAP.update(ALIASES)
+METHOD_MAP["asr-tts"] = "Resyn"
+
 
 def normalize_method(name: str) -> str:
     return METHOD_MAP.get(name.lower().strip(), name.strip())
@@ -81,9 +85,8 @@ def extract_choice_from_log(log_path: str) -> str | None:
             m = re.search(r'"summary"\s*:\s*"([^"]+)"', line)
             if m:
                 summary_val = m.group(1).strip()
-                # summary 可能是 "seedvc 满足 CER<20%"、"seedvc,EER=50.0%"、
-                # "mcadams满足情感相似度>0.93的要求"、"选择seedvc 满足..." 或纯 "combined"
-                known = '|'.join(re.escape(m) for m in METHOD_MAP)
+                # Match full canonical names before shorter aliases in older summaries.
+                known = '|'.join(re.escape(m) for m in sorted(METHOD_MAP, key=len, reverse=True))
                 m2 = re.search(rf'({known})', summary_val, re.IGNORECASE)
                 last_done_summary = m2.group(1) if m2 else summary_val
 
@@ -100,9 +103,9 @@ def check_state(choice_raw: str, target_list: list) -> bool:
     """检查 choice 是否在 target 列表中（大小写不敏感）。"""
     if not choice_raw:
         return False
-    choice_lower = choice_raw.lower()
+    choice_lower = normalize_method(choice_raw).lower()
     for t in target_list:
-        if t.lower() == choice_lower:
+        if normalize_method(t).lower() == choice_lower:
             return True
     return False
 
@@ -180,7 +183,7 @@ def run_and_fill(entries, llm, open_source, mode, cuda, json_path, indices=None)
 
         # 构造命令
         cmd = [
-            "python", "reflexion_agent_downstream.py",
+            "python", "casa_downstream.py",
             "-i", paths["input_dir"],
             "-o", paths["output_dir"],
             "--middle_dir", paths["middle_dir"],
@@ -194,7 +197,7 @@ def run_and_fill(entries, llm, open_source, mode, cuda, json_path, indices=None)
         log_dir = os.path.join(paths["output_dir"], "logs")
         os.makedirs(log_dir, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
-        log_path = os.path.join(log_dir, f"reflexion_{timestamp}.log")
+        log_path = os.path.join(log_dir, f"casa_{timestamp}.log")
 
         print(f"\n[{i}/{len(entries)-1}] {ds}")
         print(f"  prompt: {entry['prompt']}")
@@ -235,7 +238,7 @@ def run_and_fill(entries, llm, open_source, mode, cuda, json_path, indices=None)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="批量跑 reflexion agent，收集日志并自动回填",
+        description="批量跑 CASA，收集日志并自动回填",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--llm", required=True, help="模型名称，如 Qwen3.5-9B、gpt-4o")

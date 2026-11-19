@@ -31,6 +31,8 @@ import scipy.io.wavfile
 import soundfile as sf
 import torch
 
+from utils.vc_parameters import VC_DEFAULTS
+
 
 DESCRIPTION = (
     "Resyn（FishAudio 引擎）ASR→替换→TTS 重合成（可选按语言+speaker_info 选多语言参考音色，敏感词替换为”某”）"
@@ -39,10 +41,11 @@ DESCRIPTION = (
 # ── 默认路径（基于项目根目录，可通过环境变量覆盖）────────────────────────────
 _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 _TTS_REF_ROOT = os.path.join(_PROJECT_ROOT, "tts_reference")
+_MODEL_ROOT = Path(_PROJECT_ROOT) / os.environ.get("TORCH_HOME", "models")
 
 DEFAULTS = {
-    "fishaudio_model_path": os.path.join(_PROJECT_ROOT, "models/fish_speech_models/s2-pro"),
-    "fish_speech_root": os.path.join(_PROJECT_ROOT, "models/fish-speech"),
+    "fishaudio_model_path": str(_MODEL_ROOT / "fish_speech_models" / "s2-pro"),
+    "fish_speech_root": str(_MODEL_ROOT / "fish-speech"),
     "fishaudio_device": "cuda",
     "output_sr": 16000,
     # 第一说话人（单人音频只会用到这一对；双人时 spk0 用这组）
@@ -62,7 +65,7 @@ DEFAULTS = {
     # 是否在输出 wav 同目录写入 *_tts_dialogue.json
     "fishaudio_save_dialogue_json": True,
     # 每条 run_batch 文本前加 <emotion>；空字符串则不加
-    "fishaudio_emotion": "Suffocating",
+    **VC_DEFAULTS["Resyn"],
     # 按语言+speaker_info 选参考：audios/{lang}_{m|w}_{slot}.wav，texts 同名 .txt
     "tts_ref_data_root": _TTS_REF_ROOT,
     "tts_use_speaker_info_refs": True,
@@ -370,7 +373,8 @@ def _tts_lang_prefix(language: Optional[str]) -> str:
     s = full.lower()
 
     # 显式中文别名优先用 ch（兼容你已有 ch_* 资源命名）
-    if any(k in full for k in ("中文", "汉语", "普通话")) or "chinese" in s:
+    code = s.replace("_", "-").split("-")[0]
+    if code == "zh" or "chinese" in s or any(k in full for k in ("中文", "汉语", "普通话")):
         return "ch"
 
     # 常见语言别名映射
@@ -406,9 +410,8 @@ def _tts_lang_prefix(language: Optional[str]) -> str:
             return v
 
     # 标准语言码（如 en / en-US / pt_BR）归一化到两位前缀
-    token = s.replace("_", "-").split("-")[0]
-    if re.fullmatch(r"[a-z]{2}", token):
-        return token
+    if re.fullmatch(r"[a-z]{2}", code):
+        return code
 
     return "ch"
 

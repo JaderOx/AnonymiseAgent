@@ -8,7 +8,7 @@ from utils.logger_example import setup_logger
 # ── 直接运行时的默认参数 ──────────────────────────────────────────
 wav_dir              = ''   # 直接 python transcribe.py 运行时填入；经 agent.py 调用时由参数传入
 trans_dir            = ''
-asr_model            = 'whisperx'   # paraformer(zh) / FunASRNano / FunASRMLTNano / whisperx
+asr_model            = 'whisperx'   # paraformer / whisperx
 language             = 'en'
 hotwords             = []
 spk_audio_origin_dir = ''
@@ -19,8 +19,6 @@ mode                 = 'DEBUG'
 # 已知模型名 → 子模块映射（utils/transcribe/<module>.py）
 _MODEL_MODULES = {
     'paraformer':    'utils.transcribe.paraformer',
-    'FunASRNano':    'utils.transcribe.FunASRNano',
-    'FunASRMLTNano': 'utils.transcribe.FunASRMLTNano',
     'whisperx':      'utils.transcribe.whisperx_',
 }
 
@@ -193,16 +191,18 @@ def transcribe(
         max_speakers=None,
         num_files=None,
 ):
-    if asr_model is not None and asr_model in _MODEL_MODULES:
+    if asr_model is not None:
+        if asr_model not in _MODEL_MODULES:
+            raise ValueError(f'Unknown ASR model: {asr_model}')
         logger.info(f"使用指定的 ASR 模型: {asr_model}")
     else:
         # 根据 language 查配置表自动推断 ASR 模型
         from configs.config_loader import get_asr_config
-        asr_cfg = get_asr_config(args.language)
+        asr_cfg = get_asr_config(language)
         asr_model = asr_cfg['model']
         if asr_cfg['is_default']:
             logger.warning(
-                f"语言 '{args.language}' 未在 configs/language_asr_map.yaml 中配置，"
+                f"语言 '{language}' 未在 configs/language_asr_map.yaml 中配置，"
                 f"使用默认模型: {asr_model}"
             )
     # 防止 LLM 误传文件路径（如 .json 或单个音频）作为输入目录
@@ -321,8 +321,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ASR 转录")
     parser.add_argument("--input_dir", "-i", required=True, help="输入音频目录")
     parser.add_argument("--output_dir", "-o", required=True, help="转录结果输出目录")
-    parser.add_argument("--asr_model", default="paraformer",
-                        help="ASR 模型: paraformer/FunASRNano/FunASRMLTNano/whisperx")
+    parser.add_argument("--asr_model", choices=list(_MODEL_MODULES), default=None,
+                        help="ASR 模型（默认根据语言选择）")
     parser.add_argument("--language", default="中文", help="语言（中文/英文/日文 等）")
     parser.add_argument("--hotwords", default=None, help="热词，逗号分隔")
     parser.add_argument("--spk_audio_dir", default=None, help="说话人音频提取目录")

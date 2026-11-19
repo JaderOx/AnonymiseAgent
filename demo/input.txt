@@ -1,11 +1,14 @@
-inputpath-
+Input audio directory
+/path/to/synthetic/audio
 
-/path/to/Anonymise_Agent/demo/audio/input
+Anonymization requirements
+- These are English recordings. Transcribe them with WhisperX. Use one speaker per recording unless the audio indicates otherwise.
+- The recordings contain sensitive personal information. Detect and mask every spoken identifier in the audio, including names, phone numbers, email addresses, street addresses, dates of birth, and personal or medical record numbers. Preserve the rest of the wording.
+- Anonymize the speaker's voice using pitch with the default shift. Preserve intelligibility and prosody as much as possible.
+- Evaluate the final recording after both content masking and voice anonymization. Report the available privacy and speech-quality metrics.
 
-prompt-
-
-数据是中文，单说话人音频，不需要文本匿名。你对比一下NeuralVC和pitch两个方法的下游结果。
-
+Decision model
 Qwen3.5-9B
 
-/path/to/Anonymise_Agent/demo/workspace/output/downstream
+Output directory (optional)
+/path/to/output

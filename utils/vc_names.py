@@ -1,6 +1,11 @@
-"""Canonical public method names; legacy CLI names remain accepted."""
-ALIASES = {"mcadams": "formant_lpc", "formant": "formant_spec",
-           "seedvc": "NeuralVC", "fishaudio_tts": "Resyn"}
+"""Public method names and input aliases for historical plans and results."""
+METHODS = ("formant_lpc", "formant_spec", "pitch", "combined", "NeuralVC", "Resyn")
+ALIASES = {
+    "mcadams": "formant_lpc",
+    "formant": "formant_spec",
+    "seedvc": "NeuralVC",
+    "fishaudio_tts": "Resyn",
+}
 
 
 def canonical_method(name):

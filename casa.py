@@ -1,5 +1,5 @@
 """
-reflexion_agent.py — Reflexion 架构的语音匿名 Agent
+casa.py — CASA 语音匿名 Agent
 
 执行 → 评估 → 反思 → 调整 → 重试，直到满足用户目标。根据评估指标动态调整 VC 方法。
 
@@ -7,8 +7,8 @@ reflexion_agent.py — Reflexion 架构的语音匿名 Agent
 依赖：agent.py（pipeline 函数）、utils/（logger、内存隔离）
 
 用法示例：
-    python reflexion_agent.py -i /path/to/audio -r "匿名化，不要改变韵律，SNR尽量高，不需要内容匿名"
-    python reflexion_agent.py -i /path/to/audio -r "..." --max_reflections 3
+    python casa.py -i /path/to/audio -r "匿名化，不要改变韵律，SNR尽量高，不需要内容匿名"
+    python casa.py -i /path/to/audio -r "..." --max_reflections 3
 """
 
 import os
@@ -16,7 +16,8 @@ import re
 import json
 import time
 import argparse
-from utils.vc_names import canonical_method
+from configs.config_loader import get_asr_config, uses_character_timestamps
+from utils.vc_names import METHODS as VC_METHODS, canonical_method
 import sys
 import tempfile
 from pathlib import Path
@@ -29,13 +30,10 @@ from agent import (
     trans, mask, vc,
     _has_audio, _has_json,
     _ASR_CONDA_ENV, _VC_CONDA_ENV,
-    SUPPORTED_FORMATS, NO_WER_LANGUAGE,
+    SUPPORTED_FORMATS,
 )
 from utils.logger_example import setup_logger
 from utils.manage_module_memory import run_in_isolation
-
-# 可用的 VC 方法
-VC_METHODS = ["formant_lpc", "formant_spec", "pitch", "combined", "NeuralVC", "Resyn", "cosyvoice_tts"]
 
 # 指标含义（给 LLM 参考）
 METRIC_DESCRIPTIONS = {
@@ -111,11 +109,9 @@ def _handle_transcription(ctx, language, asr_model="", hotwords=None, spk_num=0,
     max_speakers = max_speakers or None
     ctx.logger.debug(f"[handler] _handle_transcription: language={language}, asr_model={asr_model}, hotwords={hotwords}, spk_num={spk_num}, min_speakers={min_speakers}, max_speakers={max_speakers}")
     if not asr_model:
-        try:
-            from configs.config_loader import get_asr_config
-            asr_model = get_asr_config(language)['model']
-        except Exception:
-            asr_model = 'paraformer' if '中文' in language else 'FunASRNano'
+        asr_model = get_asr_config(language)['model']
+    if asr_model not in _ASR_CONDA_ENV:
+        raise ValueError(f'Unknown ASR model: {asr_model}')
     ctx.asr_model_used = asr_model
     ctx.logger.info(f"[Agent] 转录: language={language} model={asr_model}")
     run_in_isolation(
@@ -207,7 +203,7 @@ def _handle_evaluation(ctx, language, gt_dir="", subject_map_path=""):
     else:
         return {"success": False, "error": "找不到匿名后音频，请先执行 mask 或 vc 步骤"}
 
-    asr_model = ctx.asr_model_used or 'paraformer'
+    asr_model = ctx.asr_model_used or get_asr_config(language)['model']
     ctx.logger.info(f"[Agent] 评估: eval_dir={eval_dir}")
     from evaluate import evaluate_all
     df = evaluate_all(
@@ -218,7 +214,7 @@ def _handle_evaluation(ctx, language, gt_dir="", subject_map_path=""):
         logger=ctx.logger, logger_file=ctx.logger_file,
         _trans_env=_ASR_CONDA_ENV.get(asr_model),
         gt_dir=gt_dir or None, subject_map_path=subject_map_path or None,
-        mode=mode_str, wer=None if language in NO_WER_LANGUAGE else True,
+        mode=mode_str, wer=None if uses_character_timestamps(language) else True,
     )
 
     if df is None:
@@ -253,7 +249,7 @@ TOOLS = [
         name="run_transcription",
         description="ASR 转录：将音频转为带时间戳的 JSON 文本",
         parameters={
-            "language": "string (必填且必须为汉字, 如 中文/英文/日文/西班牙语)",
+            "language": "string (必填, 语言代码如 zh/en/ja/es)",
             "asr_model": "string (可选, 留空自动选择)",
             "hotwords": "list (可选, 热词列表)",
             "spk_num": "int (可选, 精确说话人数量, 0=自动)",
@@ -280,7 +276,7 @@ TOOLS = [
         name="run_voice_conversion",
         description="声线转换：改变说话人声线特征",
         parameters={
-            "method": "string (必填, formant_lpc/formant_spec/pitch/combined/NeuralVC/Resyn/cosyvoice_tts)",
+            "method": "string (必填, formant_lpc/formant_spec/pitch/combined/NeuralVC/Resyn)",
             "with_mask": "bool (可选, 默认 false)",
             "num_workers": "int (可选, 默认1)",
             "whole_audio": "bool (可选, 默认 false)",
@@ -361,13 +357,9 @@ def _parse_json_output(text: str) -> dict:
 
 
 def _validate_plan(plan: dict) -> Optional[str]:
-    if isinstance(plan, dict):
-        for step in plan.get("steps", []):
-            if isinstance(step, dict) and step.get("tool") == "run_voice_conversion":
-                params = step.get("params")
-                if isinstance(params, dict) and isinstance(params.get("method"), str):
-                    params["method"] = canonical_method(params["method"])
-    """验证 plan 结构。"""
+    """Validate tool and method names before executing the plan."""
+    if not isinstance(plan, dict):
+        return "Expected a JSON plan"
     if plan.get("error"):
         return f"无法从 LLM 输出中提取执行计划，原始输出:\n{plan.get('raw', '')}"
     if "steps" not in plan:
@@ -375,8 +367,16 @@ def _validate_plan(plan: dict) -> Optional[str]:
     if not isinstance(plan["steps"], list) or len(plan["steps"]) == 0:
         return "steps 为空或格式不正确"
     for i, s in enumerate(plan["steps"]):
+        if not isinstance(s, dict) or not isinstance(s.get("params", {}), dict):
+            return f"Invalid tool call at step {i+1}"
         name = s.get("tool", "")
-        if name not in TOOL_BY_NAME:
+        if name == "run_voice_conversion":
+            params = s.setdefault("params", {})
+            method = params.get("method")
+            if not isinstance(method, str) or canonical_method(method) not in VC_METHODS:
+                return f"Unknown voice conversion method: {method!r}"
+            params["method"] = canonical_method(method)
+        if not isinstance(name, str) or name not in TOOL_BY_NAME:
             return f"步骤 {i+1} 包含未知工具: {name}"
     return None
 
@@ -470,10 +470,10 @@ def _llm_infer_worker(model_name, sys_prompt, user_prompt, output_file, gen_kwar
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ReflexionAgent
+# CASA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class ReflexionAgent:
+class CASA:
     def __init__(self, input_dir, output_dir, middle_dir, llm_model=None, mode='INFO',
                  temperature=0.01, max_new_tokens=2048, repetition_penalty=1.2):
         self.input_dir = os.path.abspath(input_dir)
@@ -497,7 +497,7 @@ class ReflexionAgent:
         }
 
         os.makedirs(self.output_dir, exist_ok=True)
-        self.logger, self.logger_file = setup_logger(self.output_dir, 'reflexion', mode)
+        self.logger, self.logger_file = setup_logger(self.output_dir, 'casa', mode)
         self.ctx = AgentContext(self.input_dir, self.output_dir, self.middle_dir,
                                 mode, self.logger, self.logger_file)
 
@@ -574,7 +574,7 @@ class ReflexionAgent:
 【重要】所有工具的 language 参数必须用中文书写（"中文"/"英文"/"日文"/"西班牙语"等），不要用英文或拼音。
 
 【可用工具】
-- run_transcription: ASR 转录。参数: language(必填，必须用中文，如"中文"/"英文"/"日文"/"西班牙语"), asr_model(可选), hotwords(可选), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。spk_num 和 min/max_speakers 三选一，都不填则自动检测
+- run_transcription: ASR 转录。参数: language(必填，如 zh/en/ja/es), asr_model(可选), hotwords(可选), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。spk_num 和 min/max_speakers 三选一，都不填则自动检测
 - run_mask: 内容匿名（依赖转录）。参数: language(必填，中文), mask_method(noise/mute), detect_method(llm/ner, 默认llm), group_num(每批处理句数，30-60，不要与说话人数混淆)
 - run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language
 - run_evaluation: 评估。参数: language(必填), gt_dir(可选), subject_map_path(可选)
@@ -718,7 +718,7 @@ class ReflexionAgent:
 
     def run(self, user_request: str, max_reflections: int = 3) -> dict:
         """
-        Reflexion 主循环：初始计划 → 执行 → 反思 → 调整 → 重试。
+        CASA 主循环：初始计划 → 执行 → 反思 → 调整 → 重试。
         """
         self.logger.debug(f"[启动] input_dir={self.input_dir}")
         self.logger.debug(f"[启动] output_dir={self.output_dir}")
@@ -781,7 +781,7 @@ class ReflexionAgent:
             print("未获得评估指标，无法进行反思")
             return {"success": True, "attempts": 1, "history": []}
 
-        # ── 3. Reflexion 循环 ───────────────────────────────────────────────
+        # ── 3. CASA 循环 ───────────────────────────────────────────────
         history = [{"vc_method": initial_vc, "metrics": current_metrics}]
 
         final_decision = None
@@ -889,13 +889,13 @@ class ReflexionAgent:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Reflexion Agent — 基于评估反馈自动调整 VC 方法',
+        description='CASA — 基于评估反馈自动调整 VC 方法',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python reflexion_agent.py -i /path/to/audio -r "匿名化中文音频，SNR尽量高，不需要内容匿名"
-  python reflexion_agent.py -i /path/to/audio -r "匿名化，不要改变韵律" --max_reflections 5
-  python reflexion_agent.py -i /path/to/audio -r "..." --llm Qwen2.5-32B-Instruct
+  python casa.py -i /path/to/audio -r "匿名化中文音频，SNR尽量高，不需要内容匿名"
+  python casa.py -i /path/to/audio -r "匿名化，不要改变韵律" --max_reflections 5
+  python casa.py -i /path/to/audio -r "..." --llm Qwen2.5-32B-Instruct
         """)
     parser.add_argument('--input_dir', '-i', required=True, help='输入音频目录')
     parser.add_argument('--request', '-r', required=True, help='自然语言任务描述')
@@ -913,7 +913,7 @@ def main():
         print(f"错误: 输入目录不存在: {args.input_dir}")
         sys.exit(1)
 
-    agent = ReflexionAgent(
+    agent = CASA(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         middle_dir=args.middle_dir,

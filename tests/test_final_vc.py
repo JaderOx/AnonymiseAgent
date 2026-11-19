@@ -9,7 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from reflexion_agent_sentence import _final_vc_from  # noqa: E402
+from utils.agent_selection import final_vc_from as _final_vc_from  # noqa: E402
 
 HIST = [
     {"vc_method": "NeuralVC", "metrics": {"eer": 51.0}, "reason": ""},

@@ -7,13 +7,13 @@ utils/voice_convert/combined.py — 共振峰缩放 + 变调叠加（推荐）
 """
 
 import numpy as np
+from utils.vc_parameters import VC_DEFAULTS
 from .formant import convert as formant_convert
 from .pitch   import convert as pitch_convert
 
 DESCRIPTION = "共振峰缩放 + 变调叠加（推荐），支持性别自适应变调方向"
 DEFAULTS    = {
-    "formant_scale": 1.05,
-    "pitch_steps":  -2.0,   # gender 字段存在时自动决定正负
+    **VC_DEFAULTS["combined"],
     "n_fft":        2048,
 }
 

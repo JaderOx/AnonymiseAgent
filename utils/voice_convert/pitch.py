@@ -8,8 +8,10 @@ import warnings
 import numpy as np
 import librosa
 
+from utils.vc_parameters import VC_DEFAULTS
+
 DESCRIPTION = "相位声码器变调（librosa），n_steps > 0 升调，< 0 降调（单位：半音）"
-DEFAULTS    = {"n_steps": -3.0}
+DEFAULTS    = VC_DEFAULTS["pitch"].copy()
 
 
 def convert(sig: np.ndarray, sr: int,

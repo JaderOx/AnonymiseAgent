@@ -134,8 +134,15 @@ def run_in_isolation(func, *args, conda_env=None, **kwargs):
             [python_bin, '-c', script],
             env=env,
             cwd=os.getcwd(),
+            stderr=subprocess.PIPE,
+            text=True,
+            errors="replace",
         )
+        if result.stderr:
+            sys.stderr.write(result.stderr)
         if result.returncode != 0:
+            detail = result.stderr.strip().splitlines()[-12:]
             raise RuntimeError(
                 f"conda 环境 '{conda_env}' 子进程异常退出，returncode={result.returncode}"
+                + ("\n" + "\n".join(detail) if detail else "")
             )

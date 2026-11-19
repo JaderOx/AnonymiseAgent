@@ -2,11 +2,17 @@ import os
 import sys
 import time
 import argparse
-from utils.vc_names import canonical_method
+from utils.vc_names import METHODS, canonical_method
+from configs.config_loader import get_asr_config, uses_character_timestamps
 from pathlib import Path
 
-from dotenv import load_dotenv
-load_dotenv()  # 读取 .env 文件（如存在）
+try:
+    from dotenv import load_dotenv
+except ModuleNotFoundError as exc:
+    if exc.name != 'dotenv':
+        raise
+else:
+    load_dotenv()
 
 from utils.logger_example import setup_logger, get_logger
 from utils.manage_module_memory import run_in_isolation
@@ -16,15 +22,12 @@ os.environ['MODELSCOPE_CACHE'] = os.environ.get('MODELSCOPE_CACHE', '.')
 os.environ['TORCH_HOME'] = os.environ.get('TORCH_HOME', './models')
 
 SUPPORTED_FORMATS = {'.wav', '.flac', '.ogg', '.aiff', '.mp3'}
-NO_WER_LANGUAGE = {"中文", "日文"}
 
 # ── 模型 → conda 环境映射 ────────────────────────────────────────
 # None 表示使用当前环境（Agent）；字符串表示切换到对应 conda 环境
 # 新增模型/方法时在此处添加一行即可
 _ASR_CONDA_ENV = {
     'paraformer':    None,
-    'FunASRNano':    None,
-    'FunASRMLTNano': None,
     'whisperx':      'whisperx',
 }
 
@@ -34,8 +37,6 @@ _VC_CONDA_ENV = {
     'pitch':        None,
     'combined':     None,
     'NeuralVC':     None,
-    # 子进程 conda 名：与 run_in_isolation 一致；若 CosyVoice 装在 fishaudio 环境里可改为 'fishaudio'
-    'cosyvoice_tts': 'fishaudio',
     'Resyn': 'fishaudio',
 }
 
@@ -133,14 +134,13 @@ def trans(wav_dir, asr_model, trans_dir, hotwords, language, logger_file, mode, 
 
 
 def vc(input_dir, output_dir, method, trans_dir, logger_file, mode,
-       num_workers, mask_dir, mask_method, language, whole_audio=False):
+       num_workers, mask_dir, mask_method, language, whole_audio=False, vc_params=None):
     method = canonical_method(method)
     logger = get_logger(logger_file, 'vc', mode)
     from voice_convert import batch_convert
 
     # TTS 类方法（有 batch_fn，无 fn）不支持全音频整段模式
-    _TTS_METHODS = {'Resyn', 'cosyvoice_tts'}
-    if whole_audio and method in _TTS_METHODS:
+    if whole_audio and method == 'Resyn':
         logger.error(
             f"VC 方法 '{method}' 是 TTS 方法，不支持全音频模式（--vc_whole），已跳过"
         )
@@ -156,6 +156,7 @@ def vc(input_dir, output_dir, method, trans_dir, logger_file, mode,
         mask_dir=mask_dir,
         mask_method=mask_method,
         language=language,
+        **(vc_params or {}),
     )
 
 
@@ -177,12 +178,11 @@ def main():
     parser.add_argument('--vc', action='store_true',
                         help='步骤3：声线转换（依赖 text_only，或直接用 input_dir）')
     parser.add_argument('--vc_method', type=canonical_method,
-                        choices=['formant_lpc', 'formant_spec', 'pitch', 'combined', 'NeuralVC',
-                                 'Resyn', 'cosyvoice_tts'],
+                        choices=METHODS,
                         default='NeuralVC',
                         help='VC 方法（combined = 共振峰缩放+变调；NeuralVC = 神经网络，需 GPU, 默认NeuralVC）')
     parser.add_argument('--vc_whole', action='store_true',
-                        help='VC 全音频模式：整段送入处理，不按转录分句（适合短音频；不支持 Resyn/cosyvoice_tts）')
+                        help='VC 全音频模式：整段送入处理，不按转录分句（适合短音频；不支持 Resyn）')
     parser.add_argument('--vc_workers', type=int, default=1,
                         help='VC 并行进程数（默认 1，多文件时可设为 CPU 核数的一半）')
     parser.add_argument('--eval', action='store_true',
@@ -194,10 +194,10 @@ def main():
     # ASR 参数
     parser.add_argument('--hotwords', type=str, default=None,
                         help='ASR 热词，逗号分隔')
-    parser.add_argument('--asr_model', type=str, default=None,
+    parser.add_argument('--asr_model', choices=list(_ASR_CONDA_ENV), default=None,
                         help='ASR 模型名称，默认根据语言自动选择')
-    parser.add_argument('--language', type=str, default='中文',
-                        help='ASR 语言（中文/中文方言/英文/日文）。中文→paraformer(有说话人识别)，中文方言/英文/日文→FunASRNano')
+    parser.add_argument('--language', type=str, default='zh',
+                        help='语言名称或代码，如 zh（中文）、en（英文）、ja（日文）')
     parser.add_argument('--spk_num', type=int, default=None,
                         help='ASR 发言人数（精确值），默认无，让模型自己判断')
     parser.add_argument('--min_speakers', type=int, default=None,
@@ -269,34 +269,12 @@ def main():
 
     try:
         # ── 步骤1: ASR 转录 ────────────────────────────────────
+        asr_cfg = get_asr_config(args.language)
+        asr_model = args.asr_model or asr_cfg['model']
         if args.trans:
-            if args.asr_model is not None:
-                asr_model = args.asr_model
-                logger.info(f"使用指定的 ASR 模型: {asr_model}")
-            else:
-                # 根据 language 查配置表自动推断 ASR 模型
-                from configs.config_loader import get_asr_config
-                asr_cfg = get_asr_config(args.language)
-                asr_model = asr_cfg['model']
-                if asr_cfg['is_default']:
-                    logger.warning(
-                        f"语言 '{args.language}' 未在 configs/language_asr_map.yaml 中配置，"
-                        f"使用默认模型: {asr_model}"
-                    )
-
             logger.info(f"语言={args.language} → ASR 模型={asr_model}")
-
-            # 能力警告（不论是指定还是自动选择的模型）
-            from configs.config_loader import get_asr_config as _get_asr_cfg
-            _asr_cfg = _get_asr_cfg(args.language) if args.asr_model is None else {}
-            if hotwords and not _asr_cfg.get('supports_hotwords', True):
-                logger.warning(
-                    f"ASR 模型 '{asr_model}' 不支持热词，--hotwords 参数将被忽略"
-                )
-            if args.spk_num is not None and not _asr_cfg.get('supports_speaker', False):
-                logger.warning(
-                    f"ASR 模型 '{asr_model}' 不支持说话人识别，--spk_num 参数将被忽略"
-                )
+            if hotwords and not asr_cfg.get('supports_hotwords', True):
+                logger.warning(f"ASR 模型 '{asr_model}' 不支持热词")
 
             # 转录顺带提取说话人音频 + 年龄/性别
             logger.debug( f"(vc={args.vc} eval={args.eval} model={asr_model})")
@@ -449,7 +427,7 @@ def main():
                 gt_dir           = args.gt_dir,
                 subject_map_path = args.subject_map_path,
                 mode             = mode,
-                wer              = None if args.language in NO_WER_LANGUAGE else True
+                wer              = None if uses_character_timestamps(args.language) else True
             )
         else:
             logger.info("跳过指标评估步骤\n")

@@ -26,6 +26,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional, Any
 
+from utils.vc_parameters import VC_DEFAULTS
+
 # ── SeedVC 模块路径 ───────────────────────────────────────────────────────────
 _SEEDVC_DIR = Path(__file__).resolve().parent.parent.parent / 'seedvc'
 if str(_SEEDVC_DIR) not in sys.path:
@@ -46,10 +48,7 @@ DEFAULTS = {
     "age_gender_device":        "cpu",         # 年龄/性别模型推理设备
     "ar_checkpoint_path":       None,          # SeedVC AR 权重，None = 用 yaml 默认
     "cfm_checkpoint_path":      None,          # SeedVC CFM 权重，None = 用 yaml 默认
-    "diffusion_steps":          30,
-    "length_adjust":            1.0,
-    "intelligibility_cfg_rate": 0.7,
-    "similarity_cfg_rate":      0.7,
+    **VC_DEFAULTS["NeuralVC"],
     "top_p":                    0.9,
     "temperature":              1.0,
     "repetition_penalty":       1.0,

@@ -41,6 +41,10 @@ class ConfigManager:
         return config
 
 
+def get_asr_model_config(name):
+    return ConfigManager(_CONFIGS_DIR / "asr_model_config.yaml").get_config(name)
+
+
 # ── 新增：语言 → ASR 模型映射（language_asr_map.yaml） ───────────────────────
 
 def _load_yaml(path: Path) -> Dict[str, Any]:
@@ -68,7 +72,7 @@ _LANG_ALIASES = {
 }
 
 
-def _normalize_language(language: str) -> str:
+def normalize_language(language: str) -> str:
     """将各种语言名标准化为 YAML 配置中使用的中文 key。"""
     if not language:
         return language
@@ -78,6 +82,10 @@ def _normalize_language(language: str) -> str:
         return normed
     # 已经是中文，直接返回
     return language
+
+
+def uses_character_timestamps(language: str) -> bool:
+    return normalize_language(language) in {"中文", "中文方言", "日文"}
 
 
 _asr_map_cache: Optional[Dict] = None
@@ -98,7 +106,7 @@ def get_asr_config(language: str) -> Dict[str, Any]:
     if _asr_map_cache is None:
         _asr_map_cache = _load_yaml(_CONFIGS_DIR / 'language_asr_map.yaml')
 
-    language = _normalize_language(language)
+    language = normalize_language(language)
     languages = _asr_map_cache.get('languages', {})
     if language in languages:
         cfg = dict(languages[language])
@@ -111,8 +119,8 @@ def get_asr_config(language: str) -> Dict[str, Any]:
     default_model = _asr_map_cache.get('default', 'whisperx')
     return {
         'model': default_model,
-        'supports_hotwords': True,
-        'supports_speaker': False,
+        'supports_hotwords': False,
+        'supports_speaker': True,
         'is_default': True,
     }
 
@@ -138,7 +146,7 @@ def get_llm_config(language: str) -> Dict[str, Any]:
     if _llm_map_cache is None:
         _llm_map_cache = _load_yaml(_CONFIGS_DIR / 'language_llm_map.yaml')
 
-    language = _normalize_language(language)
+    language = normalize_language(language)
     languages = _llm_map_cache.get('languages', {})
     default   = _llm_map_cache.get('default', {})
 

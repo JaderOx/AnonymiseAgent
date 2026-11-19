@@ -1,4 +1,4 @@
-"""Local Gradio demo using the same memory-enabled runtime as the CLI."""
+"""Gradio interface for running CASA on a server-side audio directory."""
 import argparse
 import json
 import os
@@ -14,19 +14,54 @@ sys.path.insert(0, str(ROOT))
 from dotenv import load_dotenv
 load_dotenv(ROOT / '.env')
 import gradio as gr
-from reflexion_agent_downstream import ReflexionAgent
+from casa_downstream import CASA
+
+DEFAULT_REQUEST = """- These are English recordings. Transcribe them with WhisperX. Use one speaker per recording unless the audio indicates otherwise.
+- The recordings contain sensitive personal information. Detect and mask every spoken identifier in the audio, including names, phone numbers, email addresses, street addresses, dates of birth, and personal or medical record numbers. Preserve the rest of the wording.
+- Anonymize the speaker's voice using pitch with the default shift. Preserve intelligibility and prosody as much as possible.
+- Evaluate the final recording after both content masking and voice anonymization. Report the available privacy and speech-quality metrics."""
+
+EVENT_LABELS = {
+    'memory': 'Recalling experience',
+    'plan': 'Execution plan',
+    'step': 'Running tool',
+    'step_result': 'Tool result',
+    'metrics': 'Evaluation metrics',
+    'reflection': 'Reflection',
+}
 
 
-class UIReflexionAgent(ReflexionAgent):
-    """Forward runtime events without maintaining a second execution loop."""
+class DemoCASA(CASA):
+    """Forward events from the same runtime used by the command line."""
     def __init__(self, *args, on_update=None, **kwargs):
         super().__init__(*args, **kwargs)
         self.on_update = on_update or (lambda *args: None)
 
     def _generate_initial_plan(self, request):
         if self.memory:
-            self.on_update('memory', self.memory.recall_for_prompt(task_meta=self.task_meta))
+            experiences, runs, _, related = self.memory.recall_records(self.task_meta, self._memory_exclude)
+            recalled = {
+                'Task experiences': [
+                    {'Dataset': exp.get('dataset'), 'Task': exp.get('task_type'),
+                     'Recommended method': exp.get('recommended_method'),
+                     'Methods to avoid': exp.get('avoid_methods') or [],
+                     'Source lesson (original language)': exp.get('lesson')}
+                    for exp in experiences
+                ],
+                'Related runs' if related else 'Recent runs': [
+                    {'Dataset': run.get('dataset'), 'Selected method': run.get('final_vc_method'),
+                     'Metrics': run.get('vc_results', {}).get(run.get('final_vc_method'))}
+                    for run in runs
+                ],
+            }
+            self.on_update('memory', recalled)
         plan = super()._generate_initial_plan(request)
+        if plan and self.open_source:
+            for step in plan['steps']:
+                if step['tool'] == 'run_mask':
+                    params = step.setdefault('params', {})
+                    if not params.get('llm_model'):
+                        params['llm_model'] = self.llm_model
         self.on_update('plan', plan)
         return plan
 
@@ -43,40 +78,38 @@ class UIReflexionAgent(ReflexionAgent):
         return decision
 
 
-def _find_output_audio(output_dir, method):
-    """Preview only the selected method, never an arbitrary earlier attempt."""
-    if not method:
+def _find_output_audio(selected_dir):
+    """Copy a preview from the exact conversion selected by CASA."""
+    if not selected_dir:
         return None
-    for name in (method, f'text_{method}', f'text+{method}'):
-        directory = Path(output_dir) / name
-        files = sorted(p for p in directory.rglob('*')
-                       if p.is_file() and p.suffix.lower() in {'.wav', '.flac', '.mp3', '.ogg'})
-        if files:
-            dest = Path(tempfile.mkdtemp(prefix='anonymise-preview-')) / files[0].name
-            shutil.copy2(files[0], dest)
-            return str(dest)
+    files = sorted(p for p in Path(selected_dir).rglob('*')
+                   if p.is_file() and p.suffix.lower() in {'.wav', '.flac', '.mp3', '.ogg', '.aiff'})
+    if files:
+        dest = Path(tempfile.mkdtemp(prefix='casa-preview-')) / files[0].name
+        shutil.copy2(files[0], dest)
+        return str(dest)
     return None
 
 
 def run_demo(input_dir, request, llm, local_llm, use_memory, memory_path,
              output_dir, middle_dir, max_reflections, downstream_data, downstream_script,
              gt_dir, subject_map):
-    input_path = Path(input_dir).expanduser()
-    if not input_path.is_dir():
-        raise gr.Error('请输入服务器上存在的音频目录。')
+    input_path = Path(input_dir.strip()).expanduser().resolve()
+    if not input_dir.strip() or not input_path.is_dir():
+        raise gr.Error('Enter an existing audio directory on the server.')
     if not request.strip():
-        raise gr.Error('请填写匿名化需求。')
+        raise gr.Error('Describe your anonymization requirements.')
     if bool(downstream_data.strip()) != bool(downstream_script.strip()):
-        raise gr.Error('下游数据 JSON 和脚本需要一起填写。')
-    output_dir = output_dir.strip() or str(input_path.resolve().parent / 'anonymise_demo' / 'output')
+        raise gr.Error('Provide both the downstream data JSON and its evaluation script.')
+    output_dir = output_dir.strip() or str(input_path.parent / 'casa_demo' / input_path.name / 'output')
     middle_dir = middle_dir.strip() or str(Path(output_dir).parent / 'middle')
     events = queue.Queue()
-    lines, recalled = [], ''
+    lines, recalled = [], {}
 
     def worker():
         try:
-            agent = UIReflexionAgent(
-                input_dir=str(input_path.resolve()), output_dir=output_dir, middle_dir=middle_dir,
+            agent = DemoCASA(
+                input_dir=str(input_path), output_dir=output_dir, middle_dir=middle_dir,
                 llm_model=llm.strip() or None, open_source=local_llm,
                 use_memory=use_memory, memory_path=memory_path.strip() or str(ROOT / 'memory'),
                 on_update=lambda kind, data: events.put((kind, data)),
@@ -91,56 +124,56 @@ def run_demo(input_dir, request, llm, local_llm, use_memory, memory_path,
             events.put(('error', str(exc)))
 
     threading.Thread(target=worker, daemon=True).start()
-    yield '正在运行…', recalled, '', {}, None
+    yield 'Running…', recalled, '', {}, None
     while True:
-        try:
-            kind, data = events.get(timeout=1)
-        except queue.Empty:
-            continue
+        kind, data = events.get()
         if kind == 'error':
-            raise gr.Error(data)
+            raise gr.Error(f'CASA could not complete the run. {data}')
         if kind == 'memory':
-            recalled = data or '暂无匹配经验。'
+            recalled = data
         elif kind == 'result':
-            result = data or {'success': False, 'error': '未生成有效计划'}
+            result = data or {'success': False, 'error': 'Could not generate an execution plan.'}
             method = result.get('final_vc_method')
-            status = f'完成：{method or "未选择方法"}' if result.get('success') else '运行失败，请查看日志'
-            lines.append('结果已保存到 ' + output_dir)
-            yield status, recalled, '\n'.join(lines), result, _find_output_audio(output_dir, method)
+            status = f'Completed · {method}' if method else 'Completed'
+            if not result.get('success'):
+                status = 'Run failed. See the output log for details.'
+            lines.append(f'Output directory: {output_dir}')
+            preview = _find_output_audio(result.get('final_audio_dir'))
+            yield status, recalled, '\n'.join(lines), result, preview
             return
         else:
-            lines.append(f'{kind}: {json.dumps(data, ensure_ascii=False, indent=2)}')
-        yield f'正在运行：{kind}', recalled, '\n'.join(lines), {}, None
+            lines.append(f'{EVENT_LABELS[kind]}\n{json.dumps(data, ensure_ascii=False, indent=2)}')
+        yield EVENT_LABELS[kind], recalled, '\n'.join(lines), {}, None
 
 
 def build_ui(default_llm=None, mode='INFO'):
-    with gr.Blocks(title='语音匿名化 Agent · Memory') as app:
-        gr.Markdown('# 语音匿名化 Agent\n自动规划 → 执行 → 评估 → 反思，并跨运行积累经验。')
-        gr.Markdown('输入服务器上的音频目录。需先按 README 准备模型与环境；在线 API 仅替代决策 LLM。')
+    with gr.Blocks(title='CASA · Speech Anonymization') as app:
+        gr.Markdown('# CASA · Speech Anonymization')
+        gr.Markdown('Enter a server-side audio directory and describe what the anonymized speech should preserve.')
         with gr.Row():
             with gr.Column():
-                input_dir = gr.Textbox(label='输入音频目录', placeholder='/path/to/audio')
-                request = gr.Textbox(label='匿名化需求', lines=4,
-                    value='语言为中文，说话人数量为1。不需要内容匿名，希望匿名后尽量保留韵律。')
-                llm = gr.Textbox(label='LLM 模型名', value=default_llm or os.environ.get('AGENT_LLM_MODEL', 'Qwen2.5-32B-Instruct'))
-                local = gr.Checkbox(label='使用本地 LLM（取消则使用在线 API）', value=True)
-                memory = gr.Checkbox(label='使用并更新跨运行 Memory', value=True)
-                memory_path = gr.Textbox(label='Memory 目录', value=str(ROOT / 'memory'))
-                max_ref = gr.Slider(0, 10, value=3, step=1, label='最大反思次数')
-                with gr.Accordion('输出与评估设置', open=False):
-                    output_dir = gr.Textbox(label='输出目录（留空自动创建）')
-                    middle_dir = gr.Textbox(label='中间结果目录（留空自动创建）')
-                    downstream_data = gr.Textbox(label='下游数据 JSON（可选）')
-                    downstream_script = gr.Textbox(label='下游评估脚本（可选）')
-                    gt_dir = gr.Textbox(label='真实转录目录（可选）')
-                    subject_map = gr.Textbox(label='说话人映射 JSON（可选）')
-                run = gr.Button('开始匿名化', variant='primary')
+                input_dir = gr.Textbox(label='Input audio directory', placeholder='/path/to/audio')
+                request = gr.Textbox(label='Anonymization requirements', lines=9,
+                    value=DEFAULT_REQUEST)
+                llm = gr.Textbox(label='Decision model', value=default_llm or os.environ.get('AGENT_LLM_MODEL', 'Qwen2.5-32B-Instruct'))
+                local = gr.Checkbox(label='Use a local LLM (clear to use the API)', value=True)
+                memory = gr.Checkbox(label='Recall and update cross-run memory', value=True)
+                memory_path = gr.Textbox(label='Memory directory', value=str(ROOT / 'memory'))
+                max_ref = gr.Slider(0, 10, value=3, step=1, label='Maximum reflection rounds')
+                with gr.Accordion('Output and evaluation settings', open=False):
+                    output_dir = gr.Textbox(label='Output directory (optional)')
+                    middle_dir = gr.Textbox(label='Intermediate files directory (optional)')
+                    downstream_data = gr.Textbox(label='Downstream data JSON (optional)')
+                    downstream_script = gr.Textbox(label='Downstream evaluation script (optional)')
+                    gt_dir = gr.Textbox(label='Privacy-word annotations directory (optional)')
+                    subject_map = gr.Textbox(label='Speaker mapping JSON (optional)')
+                run = gr.Button('Run anonymization', variant='primary')
             with gr.Column():
-                status = gr.Textbox(label='状态', interactive=False)
-                recalled = gr.Textbox(label='本次召回的历史经验', lines=10, interactive=False)
-                trace = gr.Textbox(label='计划、执行与反思', lines=12, interactive=False)
-                result = gr.JSON(label='最终选择与指标')
-                audio = gr.Audio(label='最终选定方法的音频预览')
+                status = gr.Textbox(label='Status', interactive=False)
+                recalled = gr.JSON(label='Recalled experience', open=1)
+                trace = gr.Textbox(label='Plan, tool calls and reflections', lines=12, interactive=False)
+                result = gr.JSON(label='Selected method, parameters and metrics')
+                audio = gr.Audio(label='Selected audio preview')
         run.click(run_demo, inputs=[input_dir, request, llm, local, memory, memory_path,
                   output_dir, middle_dir, max_ref, downstream_data, downstream_script, gt_dir, subject_map],
                   outputs=[status, recalled, trace, result, audio], concurrency_limit=1)

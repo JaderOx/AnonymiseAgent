@@ -65,11 +65,9 @@ register("NeuralVC", batch_fn=seedvc.batch_convert_fn,
          defaults=seedvc.DEFAULTS, description=seedvc.DESCRIPTION)
 
 # ── TTS 方法注册 ─────────────────────────────────────────────
-from . import fishaudio_tts, cosyvoice_tts
+from . import fishaudio_tts
 register("Resyn", batch_fn=fishaudio_tts.batch_convert_fn,
          defaults=fishaudio_tts.DEFAULTS, description=fishaudio_tts.DESCRIPTION)
-register("cosyvoice_tts", batch_fn=cosyvoice_tts.batch_convert_fn,
-         defaults=cosyvoice_tts.DEFAULTS, description=cosyvoice_tts.DESCRIPTION)
 
 # ── 其他神经网络 VC 示例（按需取消注释）────────────────────────
 # from . import rvc

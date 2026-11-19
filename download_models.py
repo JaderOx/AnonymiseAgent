@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-download_models.py — 一键下载 Anonymise Agent 所需模型到 .env 指定的路径。
+download_models.py — 一键下载 CASA 所需模型到 .env 指定的路径。
 
 模型来源：
-  - funasr(ModelScope): ASR(paraformer/FunASR*)——用 AutoModel 预缓存，路径与运行时一致
-  - ModelScope        : LLM(Qwen2.5/gemma)、emotion2vec、CosyVoice
+  - funasr(ModelScope): ASR(Paraformer)——用 AutoModel 预缓存，路径与运行时一致
+  - ModelScope        : LLM(Qwen2.5/gemma)、emotion2vec
   - HuggingFace       : 年龄性别(w2v2)、wavlm、whisperx、pyannote 说话人分离、Seed-VC
   - torch.hub         : MOS(UTMOS)
 
@@ -18,17 +18,17 @@ download_models.py — 一键下载 Anonymise Agent 所需模型到 .env 指定�
   python download_models.py --gemma               # LLM 额外下 gemma-3-27b-it
 
 可选类别（--targets）：
-  asr        paraformer(+vad+punc+campplus) + FunASRNano(+vad) + FunASRMLTNano(+vad)
+  asr        paraformer(+vad+punc+campplus)
   llm        Qwen2.5-32B-Instruct（默认）；加 --gemma 额外下 gemma-3-27b-it
   age-gender w2v2-L-robust-6-age-gender（Resyn/NeuralVC 目标说话人匹配需要）
   eval       MOS(UTMOS) + emotion2vec + wavlm-base-plus-sv
   whisperx   faster-whisper large-v3 + pyannote 说话人分离（英文/多语言 ASR）
-  vc         Seed-VC + CosyVoice（fish-speech 因版本/来源特殊，仅打印获取说明）
+  vc         Seed-VC（fish-speech 因版本/来源特殊，仅打印获取说明）
   all        以上全部
 
 注意：
   - 路径全部取自 .env（LLM_MODEL_DIR / TORCH_HOME / MODELSCOPE_CACHE），与代码运行时读取一致。
-  - ASR 由 funasr AutoModel 预缓存到 TORCH_HOME/<org>/<model>（funasr 的实际缓存位置）。
+  - Paraformer 使用 FunASR 和 ModelScope 模型缓存（MODELSCOPE_CACHE/models）。
   - pyannote 说话人分离是 gated 模型，需要 HF_TOKEN 且在 HF 上同意协议（见 .env.example）。
   - fish-speech(s2-pro) 请按脚本提示手动放置到 TORCH_HOME/fish_speech_models/s2-pro 与 TORCH_HOME/fish-speech。
 """
@@ -42,7 +42,7 @@ ROOT = Path(__file__).resolve().parent
 
 
 # ──────────────────────────────────────────────────────────────
-# 1. 读取 .env，设置环境变量（与 agent.py / reflexion_agent 行为一致）
+# 1. 读取 .env，设置环境变量（与 agent.py / casa 行为一致）
 # ──────────────────────────────────────────────────────────────
 def _resolve(p: str) -> str:
     """相对路径相对于项目根目录解析为绝对路径。"""
@@ -105,8 +105,10 @@ def ms_dl(model_id, cache_dir=None, local_dir=None):
     return _ms()(model_id, **kw)
 
 
-def hf_dl(repo_id, local_dir=None, token=None):
+def hf_dl(repo_id, local_dir=None, token=None, cache_dir=None):
     kw = {}
+    if cache_dir:
+        kw["cache_dir"] = cache_dir
     if local_dir:
         kw["local_dir"] = local_dir
     if token:
@@ -114,13 +116,10 @@ def hf_dl(repo_id, local_dir=None, token=None):
     return _hf()(repo_id, **kw)
 
 
-def funasr_precache(model_id, **extra):
-    """用 funasr AutoModel 触发下载——与运行时完全一致的缓存路径（funasr 缓存到 TORCH_HOME/<org>/<model>）。"""
-    import gc
+def precache_paraformer():
     from funasr import AutoModel
-    m = AutoModel(model=model_id, disable_update=True, ngpu=0, **extra)
-    del m
-    gc.collect()
+    from configs.config_loader import get_asr_model_config
+    AutoModel(**get_asr_model_config("paraformer"), device="cpu", ngpu=0)
 
 
 # ──────────────────────────────────────────────────────────────
@@ -135,19 +134,8 @@ def build_targets(env, include_gemma=False):
 
     T = {}
 
-    # ── ASR（funasr AutoModel 预缓存 → TORCH_HOME/<org>/<model>，与运行时一致）──
-    _VAD = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
-    T["asr"] = [
-        ("paraformer+vad+punc+campplus(中文)", lambda: funasr_precache(
-            "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-            vad_model=_VAD,
-            punc_model="iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch",
-            spk_model="iic/speech_campplus_sv-zh-cn_16k-common")),
-        ("FunASRNano+vad(方言/日文)", lambda: funasr_precache(
-            "FunAudioLLM/Fun-ASR-Nano-2512", vad_model=_VAD)),
-        ("FunASRMLTNano+vad(欧洲)", lambda: funasr_precache(
-            "FunAudioLLM/Fun-ASR-MLT-Nano-2512", vad_model=_VAD)),
-    ]
+    # ── ASR（与转录使用相同的 Paraformer 参数与 ModelScope 缓存）──
+    T["asr"] = [("Paraformer + VAD, punctuation and speaker models", precache_paraformer)]
 
     # ── LLM ──
     llm_jobs = [
@@ -187,8 +175,8 @@ def build_targets(env, include_gemma=False):
     T["whisperx"] = [
         ("faster-whisper large-v3",
          lambda: hf_dl("Systran/faster-whisper-large-v3", local_dir=os.path.join(TH, "whisperx"), token=TOK)),
-        ("pyannote speaker-diarization-3.1 (gated, 需 HF_TOKEN)",
-         lambda: hf_dl("pyannote/speaker-diarization-3.1", token=TOK)),
+        ("pyannote speaker-diarization-community-1 (gated, 需 HF_TOKEN)",
+         lambda: hf_dl("pyannote/speaker-diarization-community-1", cache_dir=os.path.join(TH, "whisperx"), token=TOK)),
     ]
 
     # ── 声线转换 ──
@@ -196,12 +184,11 @@ def build_targets(env, include_gemma=False):
         print("    [manual] fish-speech 需手动获取并放置：")
         print(f"      - 模型权重 → {os.path.join(TH, 'fish_speech_models', 's2-pro')}")
         print(f"      - 推理代码 → {os.path.join(TH, 'fish-speech')}")
-        print("      参考: https://github.com/fishaudio/fish-speech （s2-pro 版本）")
+        print(f"      hf download fishaudio/s2-pro --local-dir {os.path.join(TH, 'fish_speech_models', 's2-pro')}")
+        print("      See README for the fishaudio environment and Fish Speech source installation.")
         return "manual"
     T["vc"] = [
         ("Seed-VC(默认神经VC)", lambda: hf_dl("Plachta/Seed-VC", token=TOK)),
-        ("CosyVoice2-0.5B(可选)",
-         lambda: ms_dl("FunAudioLLM/CosyVoice2-0.5B", local_dir=os.path.join(TH, "cosyvoice2-0.5B"))),
         ("fish-speech(手动)", _fishaudio_note),
     ]
 
@@ -212,7 +199,7 @@ def build_targets(env, include_gemma=False):
 # 4. 主流程
 # ──────────────────────────────────────────────────────────────
 def main():
-    ap = argparse.ArgumentParser(description="一键下载 Anonymise Agent 所需模型")
+    ap = argparse.ArgumentParser(description="一键下载 CASA 所需模型")
     ap.add_argument("--targets", nargs="*", default=None,
                     help="类别: asr llm age-gender eval whisperx vc all（可多选；省略=默认集）")
     ap.add_argument("--gemma", action="store_true", help="LLM 额外下载 gemma-3-27b-it")
@@ -275,7 +262,7 @@ def main():
         print(f"  失败 {len(fail)}:")
         for n, e in fail:
             print(f"    - {n}: {e[:160]}")
-    print("\n提示: fish-speech 需手动放置（见上方 [manual]）。模型就绪后即可运行 agent.py / reflexion_agent。")
+    print("\n提示: fish-speech 需手动放置（见上方 [manual]）。模型就绪后即可运行 agent.py / casa_downstream.py。")
 
 
 if __name__ == "__main__":

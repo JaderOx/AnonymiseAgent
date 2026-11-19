@@ -10,8 +10,10 @@ utils/voice_convert/formant.py — STFT 快速共振峰缩放
 import numpy as np
 import librosa
 
+from utils.vc_parameters import VC_DEFAULTS
+
 DESCRIPTION = "STFT 频率轴插值缩放（快速共振峰变换，推荐范围 scale 1.05~1.20）"
-DEFAULTS    = {"scale": 1.1, "n_fft": 2048}
+DEFAULTS    = {**VC_DEFAULTS["formant_spec"], "n_fft": 2048}
 
 
 def convert(sig: np.ndarray, sr: int,

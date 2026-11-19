@@ -10,14 +10,6 @@ from scipy.signal import lfilter, firwin, find_peaks
 import warnings
 warnings.filterwarnings('ignore')
 
-# 直接运行该文件：
-# 会根据mask_root路径下的json文件，将wav_root中的对应音频进行mask
-# 输出到output_root下
-
-wav_dir = ""     # 音频路径（直接运行时填入；经 agent.py / reflexion_agent 调用时由参数传入）
-mask_dir = ""     # 掩码信息保存路径
-output_dir = ""             # 保护后音频保存路径
-
 # 超参数
 time_append = 50                     # 保护区间在原有基础上向两边分别扩充50ms  
 noise_method = 'formant'              # white, orginal, spectral_match, formant, mute方法。详见下方代码注释

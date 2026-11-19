@@ -11,7 +11,9 @@ import pandas as pd
 
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[2]))
 sys.path.append(str(Path(__file__).parent.parent))
+from configs.config_loader import normalize_language
 from logger_example import setup_logger, get_logger
 
 from manage_module_memory import run_in_isolation
@@ -55,10 +57,10 @@ def normalize_en(s: str) -> str:
 
 def normalize_text(s: str, language: str) -> str:
     """根据语言选择规范化函数。"""
-    lang = (language or "").strip().lower()
-    if lang == "zh":
+    lang = normalize_language(language)
+    if lang in {"中文", "中文方言"}:
         return normalize_zh(s)
-    elif lang in ["en", "es"]:
+    elif lang in {"英文", "西班牙语"}:
         return normalize_en(s)
     else:
         # 其他语言：小写 + 去标点 + 合并空白
@@ -275,8 +277,8 @@ def compute_directory_cer(
 
 
 if __name__ == "__main__":
-    vc_methods = ["pitch", "formant", "combined", "mcadams", "seedvc", "fishaudio_tts"]
-    for vc_method in vc_methods:
+    from utils.vc_names import METHODS
+    for vc_method in METHODS:
         ori_dir = f'/path/to/data/NCMMSC_AD/input'
         ori_trans = f'/path/to/data/NCMMSC_AD/middle/trans_origin'
 

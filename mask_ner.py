@@ -35,7 +35,7 @@ MULTILINGUAL_PRIVACY_LABELS = {"PER", "LOC", "ORG"}
 # 中文 CLUENER 模型的隐私相关标签
 CHINESE_PRIVACY_LABELS = {"address", "name", "company", "government", "organization", "school"}
 
-NO_WER_LANGUAGE = {"中文", "日文"}
+from configs.config_loader import normalize_language, uses_character_timestamps
 
 
 def _get_privacy_labels(model_name: str) -> set:
@@ -59,7 +59,7 @@ def char_to_word_positions(
         word_timestamps: list
         ) -> tuple:
     """将字符位置范围转换为时间戳范围（与 mask_llm.py 逻辑一致）。"""
-    if language in NO_WER_LANGUAGE:
+    if uses_character_timestamps(language):
         word_start_timestamp = word_timestamps[char_start] if char_start < len(word_timestamps) else word_timestamps[-1]
         word_end_timestamp = word_timestamps[char_end] if char_end < len(word_timestamps) else word_timestamps[-1] + 100
     else:
@@ -178,8 +178,7 @@ def mask_ner(
         logger.warning(f"[NER] group_size 设置过大，已自动调整为 30")
     # ── 确定模型 ──────────────────────────────────────────────────────────
     if ner_model is None:
-        lang_key = language.strip().lower() if language else ""
-        ner_model = DEFAULT_NER_MODELS.get(language, DEFAULT_NER_MODELS.get(lang_key, "Davlan/bert-base-multilingual-cased-ner-hrl"))
+        ner_model = DEFAULT_NER_MODELS.get(normalize_language(language), "Davlan/bert-base-multilingual-cased-ner-hrl")
 
     privacy_labels = _get_privacy_labels(ner_model)
     logger.info(f"[NER] 模型: {ner_model}")

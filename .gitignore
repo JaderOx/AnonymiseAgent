@@ -7,7 +7,6 @@ models/
 checkpoints/
 LLMs/
 w2v2-L-robust-6-age-gender/
-CosyVoice/
 tts_methods/
 
 # ── 运行产物（输入 / 中间 / 输出 / 下游）────────────────────

@@ -1,14 +1,14 @@
-# Anonymise Agent
+# CASA
 
 **English** | [简体中文](README_zh.md)
 
 > A multi-scenario speech anonymization toolkit: a configurable **anonymization pipeline** + a **reflective** LLM Agent.
 
 One-click speech anonymization (de-identification + privacy-word removal): **ASR transcription → privacy-word detection (LLM/NER) → audio masking → voice conversion → metric evaluation**.
-The outer `ReflexionAgent` takes natural-language requirements, automatically plans the steps, executes them, reads the evaluation/downstream results and reflects — retrying with a different voice-conversion method when needed until the target is met.
+CASA takes natural-language requirements, automatically plans the steps, executes them, reads the evaluation/downstream results and reflects — adjusting the voice-conversion method or its parameters against the requested goal.
 
 - 🔁 **Pipeline**: `agent.py` chains the four stages with subprocess isolation to prevent OOM, fully configuration-driven (language → ASR/LLM/prompt all live in `configs/*.yaml`).
-- 🤖 **Reflexion Agent**: `reflexion_agent_downstream.py` (includes downstream-task baseline comparison); `reflexion_agent.py` is a lightweight version without downstream tasks.
+- 🤖 **CASA**: `casa_downstream.py` (includes downstream-task baseline comparison); `casa.py` is a lightweight version without downstream tasks.
 - 🎛️ **Multiple voice-conversion methods**: `formant_lpc / formant_spec / pitch / NeuralVC / Resyn` (default `NeuralVC`; use `--vc_method` to pick others, e.g. `Resyn`).
 - 📊 **Comprehensive metrics**: SNR, MOS, CER/WER, emotion similarity, fundamental frequency, speaker EER, privacy-word masking accuracy.
 - 🖥️ **Gradio Demo**: `demo/demo.py` visualizes the full "plan–execute–reflect" process.
@@ -18,34 +18,28 @@ The outer `ReflexionAgent` takes natural-language requirements, automatically pl
 
 ## Environment Setup
 
-You need **3 conda environments** (the pipeline switches conda environments automatically per model — see `_ASR_CONDA_ENV` / `_VC_CONDA_ENV` in `agent.py`):
+Run the following commands from the repository root. CASA runs in `Agent`, uses `whisperx` for WhisperX transcription, and uses `fishaudio` for Resyn synthesis.
 
 ```bash
-# 1) Main environment "Agent" (ASR / masking / DSP-VC / evaluation / Agent inference)
 conda create -n Agent -y python=3.10 && conda activate Agent
-# Your own torch build
-pip install torch==.. torchvision==.. torchaudio==.. --index-url ..
+python -m pip install torch==2.10.0 torchvision==0.25.0 torchaudio==2.10.0 --index-url https://download.pytorch.org/whl/cu128
+python -m pip install -r requirements.txt
 
-pip install -r requirements.txt --ignore-installed torch torchvision torchaudio
-
-# (Optional) FunASR patch: only needed when using FunASRNano / FunASRMLTNano for ASR.
-#     Fixes two bugs (FunASRNano sentence segmentation and a VAD KeyError).
-#     Skip it if you use paraformer / whisperx.
-# cp utils/auto_model.py $(python -c "import funasr,os;print(os.path.dirname(funasr.__file__))")/auto/auto_model.py
-
-# 2) whisperx environment (needed when running English / other languages through whisperx ASR)
 conda create -n whisperx -y python=3.10 && conda activate whisperx
-pip install faster-whisper pyannote.audio whisperx zhconv audonnx
+python -m pip install faster-whisper pyannote.audio whisperx zhconv audonnx python-dotenv pyyaml
 
-# 3) asr-tts environment (for plugging in your own TTS model; install per the model's official docs,
-#    then set the environment name in _VC_CONDA_ENV)
-conda create -n _name -y python=3.10
+conda create -n fishaudio -c conda-forge -y python=3.10 pyaudio sox ffmpeg
+conda activate fishaudio
+mkdir -p models
+git clone --depth 1 --branch v2.0.0-beta https://github.com/fishaudio/fish-speech.git models/fish-speech
+python -m pip install -e 'models/fish-speech[cu128]' python-dotenv pyyaml
+
+conda activate Agent
+hf download fishaudio/s2-pro --local-dir models/fish_speech_models/s2-pro
+cp .env.example .env
 ```
 
-Copy and fill in the configuration:
-```bash
-cp .env.example .env   # Fill in HF_TOKEN, model directories, etc.
-```
+Fill in the model directories and token in `.env`. The commands use the default `TORCH_HOME=./models`. If you change it, place both the Fish Speech checkout and S2-Pro weights under that root. [Fish Speech installation](https://github.com/fishaudio/fish-speech/blob/v2.0.0-beta/docs/en/install.md) · [S2-Pro weights](https://huggingface.co/fishaudio/s2-pro)
 
 ---
 
@@ -57,7 +51,9 @@ cp .env.example .env   # Fill in HF_TOKEN, model directories, etc.
 |---|---|---|
 | Privacy-word detection / Agent inference | `$LLM_MODEL_DIR/` (default `./LLMs`) | `Qwen2.5-32B-Instruct` (Chinese/English/Japanese), `gemma-3-27b-it` (default / other languages) / `Qwen2.5-32B-Instruct` (default Agent model; override with `AGENT_LLM_MODEL`) |
 | Age/gender (ASR meta annotation, TTS target-speaker matching) | `$TORCH_HOME/` (default `./models`) | `w2v2-L-robust-6-age-gender` |
-| ASR / evaluation models | auto-downloaded | paraformer / FunASR* / whisperx / UTMOS / emotion2vec / wavlm-base-plus-sv |
+| ASR / evaluation models | auto-downloaded | Paraformer / WhisperX / UTMOS / emotion2vec / wavlm-base-plus-sv |
+
+NeuralVC selects reference speakers from `utils/voice_convert/aishell/aishell_target_speaker.json`. Set its `wav_path` entries to the corresponding local AISHELL files before running NeuralVC.
 
 > Hardware: ≥3× NVIDIA RTX 4090 recommended; with 3 GPUs keep `--group_num` < 30.
 
@@ -65,7 +61,7 @@ cp .env.example .env   # Fill in HF_TOKEN, model directories, etc.
 
 ## One-click Model Download
 
-`download_models.py` downloads all required models to the paths set in `.env` (funasr / ModelScope / HuggingFace / torch.hub each via its own channel; existing files are skipped):
+`download_models.py` downloads the selected models to the paths set in `.env` and prints the separate Resyn setup instructions (funasr / ModelScope / HuggingFace / torch.hub each via its own channel; existing files are skipped):
 
 ```bash
 python download_models.py --list            # Preview what will be downloaded
@@ -79,7 +75,7 @@ Categories: `asr` / `llm` / `age-gender` / `eval` / `whisperx` / `vc` / `all`.
 > - By default downloads `Qwen2.5-32B-Instruct`; add `--gemma` to also download `gemma-3-27b-it`.
 > - pyannote speaker diarization is a gated model and requires `HF_TOKEN`.
 > - If HuggingFace is unreachable, set `HF_ENDPOINT=https://hf-mirror.com` in `.env`.
-> - The TTS model must be integrated by yourself.
+> - Resyn uses Fish Speech S2-Pro and the reference clips in `tts_reference/`. The setup commands above install its code and weights.
 
 ---
 
@@ -91,15 +87,15 @@ See the examples in `scripts/`.
 ```bash
 CUDA_VISIBLE_DEVICES=0,1,2 python agent.py \
   -i /path/to/input -o /path/to/output --middle_dir /path/to/middle \
-  --trans --language 中文 --hotwords "$(grep -v '^#' hotwords.txt | tr '\n' ',')" \
+  --trans --language zh \
   --mask --method noise --group_num 30 \
   --vc --vc_method NeuralVC \
   --eval --gt_dir /path/to/gt --subject_map_path /path/to/map.json
 ```
 
-**B. Let the Reflexion Agent plan and reflect on its own** (`reflexion_agent_downstream.py`)
+**B. Run CASA with a natural-language request** (`casa_downstream.py`)
 ```bash
-CUDA_VISIBLE_DEVICES=0 python reflexion_agent_downstream.py \
+CUDA_VISIBLE_DEVICES=0 python casa_downstream.py \
   -i /path/to/input \
   -r "Chinese, single speaker; compare downstream performance of Resyn vs pitch" \
   --downstream_data_json /path/to/data.json \
@@ -108,6 +104,8 @@ CUDA_VISIBLE_DEVICES=0 python reflexion_agent_downstream.py \
 ```
 > `--downstream_data_json` / `--downstream_script` are optional; if omitted, only anonymization + metric evaluation + reflection are performed (no downstream classification).
 > Add `--no-open_source` to use an OpenAI-compatible API instead (configure `BASE_URL` / `OPENAI_API_KEY` in `.env`).
+
+CASA can set `vc_params` during planning and reflection. For example, `{"method":"pitch","vc_params":{"n_steps":-2}}` requests a two-semitone shift. The prompt lists each method’s defaults, including `pitch.n_steps = -3`, `formant_lpc.alpha = 0.8` and `formant_spec.scale = 1.1`. The selected parameters, metrics and audio directory are recorded in `agent_result.json`.
 
 **C. Gradio Demo**
 ```bash
@@ -122,9 +120,9 @@ For API inference, set `OPENAI_API_KEY` (legacy `API_KEY` remains supported), op
 
 ## Cross-run Memory
 
-`reflexion_agent_downstream.py` and the Demo share the memory-enabled runtime. `reflexion_agent_sentence.py` reuses that runtime and adds the cascade mode below. `reflexion_agent.py` is the lightweight example without downstream evaluation or cross-run memory.
+`casa_downstream.py` and the English demo share the memory-enabled runtime. `casa.py` is the lightweight entry point.
 
-By default, the Agent loads the repository's `memory/`, containing 14 GPT-generated task experiences (`experiences.json`) and 16 historical runs (`runs/`). It extracts task information from the request, recalls task experiences and relevant run details for planning and reflection, then saves the run before asking the LLM to summarize experience. No backfill tools are needed. Include the language, speaker count, downstream task and anonymization goals in your request.
+By default, the Agent loads the repository's `memory/`, containing 14 Qwen-generated task experiences (`experiences.json`) and 16 historical runs (`runs/`). It extracts task information from the request, recalls task experiences and relevant run details for planning and reflection, then saves the run before asking the LLM to summarize experience. No backfill tools are needed. Include the language, speaker count, downstream task and anonymization goals in your request.
 
 - `--memory_path DIR`: select the read/write directory; the default updates the bundled `memory/`. To preserve the initial data, first run `cp -R memory /path/to/my_memory` and use that directory.
 - `--no_memory`: disable memory.
@@ -132,52 +130,17 @@ By default, the Agent loads the repository's `memory/`, containing 14 GPT-genera
 
 Historical `/path/to/...` values are placeholders for original artifacts. Recall uses stored text and metrics without accessing those paths. Memory read/write or summarization failures produce warnings and allow the main flow to continue; saved run records are retained. Validate historical recommendations on your own data.
 
-## Sample-level Cascade
-
-**Prerequisite: each method's anonymized output already exists in `output_dir/<method>/`, with relative filenames matching the input.** The cascade scores speaker similarity, selects alternatives and copies the selected audio; it does not run VC or the decision LLM. Each input file is one detection unit; split audio into sentences first for sentence-level detection.
-
-```bash
-python reflexion_agent_sentence.py \
-  -i /path/to/audio -o /path/to/output \
-  --reflex_methods formant_spec,NeuralVC,Resyn --fail_threshold 0.75
-
-# With existing Agent results, start with the selected method,
-# then rank the remaining methods by downstream bACC:
-python reflexion_agent_sentence.py -i /path/to/audio -o /path/to/output \
-  --reflex_auto --fail_threshold 0.75
-```
-
-Similarity strictly above the threshold triggers the next method. If every method fails, the lowest-similarity available candidate is selected and marked accordingly; files that cannot be scored or have no usable candidates appear in `unassigned`. Outputs are written to `reflex_<methods>/` with a `reflex_report.json`; use `--reflex_dir_name` to customize the directory. Re-evaluate EER and downstream metrics on the merged output.
-
-The default fixed threshold is 0.75. `--no_fail_threshold` switches to the first method's `mean + k × IQR` rule with a similarity floor. Adjust it with `--fail_iqr_k`, `--fail_score_floor` or `--no_fail_score_floor`. Validate thresholds on your data.
-
-## Method Names and Final Selection
-
-| Current name | Accepted legacy alias |
-|---|---|
-| `formant_lpc` | `mcadams` |
-| `formant_spec` | `formant` |
-| `NeuralVC` | `seedvc` |
-| `Resyn` | `fishaudio_tts` |
-
-`pitch`, `combined` and `cosyvoice_tts` retain their names. The pipeline CLI, conversion registry and Agent plans accept legacy names; new results use canonical names. Existing result directories are not renamed automatically; organize them before reuse.
-
-When ending exploration, the LLM can return `best_vc_method` to select an already-tried method. Final metrics follow that selection. Untried selections are rejected or fall back; legacy responses without this field retain the last-attempt behavior.
-
----
-
 ## Directory Structure
 
 ```
 agent.py                       # Pipeline orchestrator (trans / mask / vc / eval — four stages)
-reflexion_agent_downstream.py  # Reflexion Agent (with downstream tasks)
-reflexion_agent.py             # Reflexion Agent (lightweight, without downstream tasks)
-reflexion_agent_sentence.py    # Shared Agent runtime + sample-level cascade
+casa_downstream.py  # CASA with memory and optional downstream evaluation
+casa.py             # Lightweight CASA
 memory/    # Task experiences and historical run records
 transcribe.py / mask_llm.py / mask_ner.py / apply_mask.py / voice_convert.py / evaluate.py
 configs/   # language → ASR/LLM/prompt mappings (tweak config, not code)
 utils/     # ASR / VC / metrics / logging / subprocess memory isolation
-tts_reference/  # reference audio + text needed by fishaudio/cosyvoice (sample data)
+tts_reference/  # reference audio and transcripts for Resyn
 demo/      # Gradio Demo
 ```
 
@@ -185,18 +148,9 @@ demo/      # Gradio Demo
 
 ## Configuration Files
 
-- `configs/language_asr_map.yaml`: language → ASR model (paraformer / FunASRNano / FunASRMLTNano / whisperx).
-- `configs/language_llm_map.yaml`: language → LLM model + privacy-word detection prompt (edit `prompt` to customize — no code change needed).
-- `configs/asr_model_config.yaml`: loading parameters for each ASR model.
-
-| ASR model | Languages | Hotwords | Diarization | conda env |
-|---|---|---|---|---|
-| `paraformer` | Chinese | ✗ | ✓ | Agent |
-| `FunASRNano` | Chinese dialects, Japanese | ✓ | ✗ | Agent |
-| `FunASRMLTNano` | European languages | ✓ | ✗ | Agent |
-| `whisperx` | English / others (default) | ✓ | ✓ (needs HF_TOKEN) | whisperx |
-
-Languages not listed in the config fall back to `default` (ASR: whisperx; LLM: gemma-3-27b-it) and emit a warning in the logs.
+- `configs/language_asr_map.yaml` selects Paraformer for Chinese (`zh`) and WhisperX for other languages. Paraformer includes speaker diarization. WhisperX uses pyannote for diarization when `HF_TOKEN` is configured.
+- `configs/asr_model_config.yaml` lists the Paraformer model, VAD, punctuation and speaker checkpoints.
+- `configs/language_llm_map.yaml` maps languages to privacy-word detection models and prompts. Chinese, English and Japanese use Qwen by default. Other languages use the default configuration.
 
 ---
 
@@ -219,7 +173,7 @@ Languages not listed in the config fall back to `default` (ASR: whisperx; LLM: g
 python -m pytest tests -q
 ```
 
-Covers memory persistence/recall, final selection, Demo integration, legacy aliases and cascade assignment. Model and evaluation calls are simulated in tests; full inference requires the environments and models above.
+Covers memory persistence and recall, VC parameters, final selection, language handling and demo integration. Model and evaluation calls are simulated in tests; full inference requires the environments and models above.
 
 ## Citation
 TODO

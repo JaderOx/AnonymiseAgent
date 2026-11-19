@@ -9,14 +9,7 @@ recognize 返回统一格式：
     [{"index": int, "text": str, "timestamp": [ms, ms, ...], "speaker": int}, ...]
 """
 
-MODEL_ID       = "iic/speech_seaco_paraformer_large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
-MODEL_REVISION = "v2.0.4"
-VAD_MODEL      = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
-VAD_REVISION   = "v2.0.4"
-PUNC_MODEL     = "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
-PUNC_REVISION  = "v2.0.4"
-SPK_MODEL      = "iic/speech_campplus_sv_zh-cn_16k-common"
-SPK_REVISION   = "v2.0.2"
+from configs.config_loader import get_asr_model_config
 
 
 def load_model(language, hotwords, spk_num, logger, min_speakers=None, max_speakers=None):
@@ -30,18 +23,7 @@ def load_model(language, hotwords, spk_num, logger, min_speakers=None, max_speak
         # min != max 或只指定了一个 → 不设 spk_num，避免钉死错误人数
 
     logger.info("加载 Paraformer 模型...")
-    model = AutoModel(
-        model=MODEL_ID,
-        model_revision=MODEL_REVISION,
-        vad_model=VAD_MODEL,
-        vad_model_revision=VAD_REVISION,
-        punc_model=PUNC_MODEL,
-        punc_model_revision=PUNC_REVISION,
-        spk_model=SPK_MODEL,
-        spk_model_revision=SPK_REVISION,
-        disable_update=True,
-        device="cuda",
-    )
+    model = AutoModel(**get_asr_model_config("paraformer"), device="cuda")
     generate_kwargs = {
         'cache': {},
         'language': language,

@@ -84,16 +84,15 @@ languages:
   英文:
     model: Qwen2.5-32B-Instruct
     prompt: |
-      Extract strictly the following three types of privacy words from the input text:
-      1. Personal names, e.g., John Smith
-      2. ID numbers, certificate numbers, phone numbers, class numbers, house numbers, and similar identifiers
-      3. Addresses including provinces, districts, counties, roads, etc., e.g., New York, Main Street
-
-      Special notes:
-      - There may be typos; use context to determine if a word is a privacy term, and output it as-is
-      - Output the minimum unit of each privacy word
-      - Do not treat date references (e.g., "the 3rd", "the 22nd") as identifiers
-      - Academic credentials and education stages are not privacy words
+      Extract spoken personal identifiers from the transcript:
+      1. Personal names.
+      2. Phone numbers, email addresses, and identifying account or user handles.
+      3. Street addresses, house numbers, and other identifying locations.
+      4. Dates of birth, government or certificate IDs, patient or medical record numbers,
+         financial or account numbers, and other identifiers linked to a person.
+      Copy the exact words as transcribed, including numbers or email addresses written out
+      as speech. Include every occurrence. Return the smallest complete identifying span.
+      Use context to distinguish an identifying date or number from an ordinary date or number.
     prompt_suffix: |
       The language to process is '{language}'. Extract privacy words according to the above rules,
       and output strictly in the format: <result>word1,word2,word3,...,wordn</result>

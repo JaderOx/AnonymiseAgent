@@ -10,8 +10,10 @@ import numpy as np
 import librosa
 from scipy.signal import tf2zpk, lfilter
 
+from utils.vc_parameters import VC_DEFAULTS
+
 DESCRIPTION = "McAdams 幂次角度变换（OLA-LPC，原方法，变化幅度弱）"
-DEFAULTS    = {"lp_order": 20, "alpha": 0.8, "win_ms": 20, "shift_ms": 10}
+DEFAULTS    = {"lp_order": 20, **VC_DEFAULTS["formant_lpc"], "win_ms": 20, "shift_ms": 10}
 
 
 def _ola_transform(sig: np.ndarray, sr: int, frame_fn, win_ms=20, shift_ms=10) -> np.ndarray:

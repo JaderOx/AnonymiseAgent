@@ -32,16 +32,17 @@ _PROJECT_ROOT = str(Path(__file__).resolve().parent.parent.parent)
 #   TRANSFORMERS_OFFLINE=1    — Transformers 离线模式
 #   HF_ENDPOINT=https://hf-mirror.com  — HuggingFace 镜像（国内用户）
 
-MODEL_PATH       = os.path.join(_PROJECT_ROOT, "models/whisperx")
-ALIGN_MODEL_PATH = os.path.join(_PROJECT_ROOT, "models/whisperx/align")
-DIARIZE_MODEL_PATH = os.path.join(_PROJECT_ROOT, "models/whisperx/")  # pyannote diarization 模型缓存
+_MODEL_ROOT = Path(_PROJECT_ROOT) / os.environ.get("TORCH_HOME", "models")
+MODEL_PATH = str(_MODEL_ROOT / "whisperx")
+ALIGN_MODEL_PATH = str(_MODEL_ROOT / "whisperx" / "align")
+DIARIZE_MODEL_PATH = MODEL_PATH
 WHISPER_MODEL    = "large-v3"
 BATCH_SIZE       = 16
 COMPUTE_TYPE     = "float16"
 
 TO_LANGUAGE_CODE = {
     # 中文名
-    "中文": "zh", "英语": "en", "德语": "de", "西班牙语": "es",
+    "中文": "zh", "中文方言": "zh", "英语": "en", "德语": "de", "西班牙语": "es",
     "俄语": "ru", "韩语": "ko", "法语": "fr", "日文": "ja", "日语": "ja",
     "葡萄牙语": "pt", "土耳其语": "tr", "波兰语": "pl", "加泰罗尼亚语": "ca",
     "荷兰语": "nl", "阿拉伯语": "ar", "瑞典语": "sv", "意大利语": "it",
@@ -105,7 +106,7 @@ def load_model(language, hotwords, spk_num, logger, min_speakers=None, max_speak
 
     logger.info(f"加载 WhisperX 模型（{WHISPER_MODEL}，language={lang_code}）...")
     asr_model = _whisperx.load_model(
-        WHISPER_MODEL,
+        MODEL_PATH if (Path(MODEL_PATH) / "model.bin").is_file() else WHISPER_MODEL,
         device,
         compute_type=COMPUTE_TYPE,
         download_root=MODEL_PATH,

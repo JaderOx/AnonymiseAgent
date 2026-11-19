@@ -331,23 +331,26 @@ def evaluate_origin(
 
 if __name__ == '__main__':
     import argparse
+    from agent import _ASR_CONDA_ENV
+    from configs.config_loader import get_asr_config
     parser = argparse.ArgumentParser(description="匿名效果评估")
     parser.add_argument("--input_dir_vc", required=True, help="匿名后音频目录")
     parser.add_argument("--input_dir_origin", required=True, help="原始音频目录")
     parser.add_argument("--trans_dir_vc", default=None, help="匿名后转录目录（可选，无转录时跳过CER）")
     parser.add_argument("--trans_dir_origin", default=None, help="原始转录目录（可选，无转录时跳过CER）")
     parser.add_argument("--middle_dir", default=None, help="中间结果目录（默认 input_dir_vc 的父目录/middle）")
-    parser.add_argument("--asr_model", default="paraformer", help="ASR 模型名")
+    parser.add_argument("--asr_model", choices=list(_ASR_CONDA_ENV), default=None, help="ASR 模型名")
     parser.add_argument("--language", default="中文", help="语言")
     parser.add_argument("--output_dir", "-o", required=True, help="评估结果输出目录")
     parser.add_argument("--hotwords", default=None, help="热词，逗号分隔")
     parser.add_argument("--gt_dir", default=None, help="隐私词 GT JSON 目录（可选）")
     parser.add_argument("--subject_map_path", default=None, help="EER subject 映射文件（可选）")
-    parser.add_argument("--mode_str", default="", help="评估模式标识（如 text_seedvc）")
+    parser.add_argument("--mode_str", default="", help="评估模式标识（如 text_NeuralVC）")
     parser.add_argument("--wer", action="store_true", help="是否计算 WER")
     parser.add_argument("--mode", choices=["DEBUG", "INFO"], default="INFO", help="日志级别")
     args = parser.parse_args()
 
+    asr_model = args.asr_model or get_asr_config(args.language)["model"]
     hotwords_list = args.hotwords.split(",") if args.hotwords else []
     middle_dir = args.middle_dir or os.path.join(os.path.dirname(os.path.abspath(args.input_dir_vc)), "middle")
 
@@ -358,13 +361,13 @@ if __name__ == '__main__':
         input_dir_origin=args.input_dir_origin,
         trans_dir_origin=args.trans_dir_origin,
         middle_dir=middle_dir,
-        asr_model=args.asr_model,
+        asr_model=asr_model,
         hotwords=hotwords_list,
         language=args.language,
         output_dir=args.output_dir,
         logger=logger,
         logger_file=logger_file,
-        _trans_env=None,
+        _trans_env=_ASR_CONDA_ENV[asr_model],
         gt_dir=args.gt_dir,
         subject_map_path=args.subject_map_path,
         mode=args.mode_str or None,

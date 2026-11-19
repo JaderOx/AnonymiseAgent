@@ -38,6 +38,8 @@ import re
 import time
 import tempfile
 
+from utils.vc_names import ALIASES, METHODS
+
 # ── 常量 ─────────────────────────────────────────────────────────────────────
 
 SCHEMA_VERSION = 2
@@ -58,10 +60,9 @@ MAX_LESSON_LEN = 2000     # Layer-1 lesson（存全文，2000 只是防极端长
 METHOD_CATEGORIES = {
     'pitch':           '信号处理（F0 变换，不重合成）',
     'formant_spec':    '信号处理（共振峰变换，不重合成）',
-    'formant_lpc':     '信号处理（频谱倾斜调节，不重合成）',
+    'formant_lpc':     '信号处理（McAdams LPC 共振峰变换）',
     'NeuralVC':        '神经声线转换 VC（保留内容与韵律结构，非 TTS 重合成）',
     'Resyn':           'ASR→替换→TTS 重合成（语音完全重新生成）',
-    'cosyvoice_tts':   'ASR→替换→TTS 重合成（语音完全重新生成）',
     'combined':        '组合方法',
 }
 
@@ -94,8 +95,7 @@ TASK_TYPE_VOCAB = {
 # 指标里出现过的全部 VC 方法名（lesson 校验用，宽松集合）。
 # 注意规范名大小写敏感（与结果目录名一致）：Resyn / NeuralVC；
 # 小写归一与旧名（fishaudio_tts/seedvc/mcadams/formant）由 _normalize 的别名表处理
-KNOWN_VC_METHODS = {'formant_lpc', 'formant_spec', 'pitch', 'NeuralVC', 'Resyn',
-                    'combined', 'cosyvoice_tts'}
+KNOWN_VC_METHODS = set(METHODS)
 
 # fallback_classify 的领域关键词 → task_type（只做归一化，不猜测缺失字段）
 _TASK_TYPE_KEYWORDS = [
@@ -402,11 +402,11 @@ class TwoLayerMemory:
     def record_run(self, input_dir, language, request, output_dir,
                    history, final_vc_method, success=True,
                    task_meta=None, baseline_bacc=None, final_metrics=None,
-                   artifacts=None, llm_call=None):
+                   artifacts=None, llm_call=None, final_vc_params=None):
         """记一次运行：先写 Layer-2 run 文件，再让 LLM 总结更新 Layer-1。
 
         Args:
-            history: ReflexionAgent 的 history 列表
+            history: CASA 的 history 列表
                 [{"vc_method": str, "metrics": dict, "reason": str}, ...]
             task_meta: _classify_request / fallback_classify 的输出（可含 warnings）
             final_metrics: agent 最终 current_metrics（从中提取 downstream_*）
@@ -423,6 +423,9 @@ class TwoLayerMemory:
             vc_results[method] = {k: _to_float(v) for k, v in (h.get('metrics') or {}).items()}
             if h.get('reason'):
                 reflections.append(f"{method}: {_truncate(h['reason'])}")
+
+        if final_vc_params is not None and final_vc_method and final_metrics:
+            vc_results[final_vc_method] = {k: _to_float(v) for k, v in final_metrics.items()}
 
         final_ds = {}
         for k, v in (final_metrics or {}).items():
@@ -464,6 +467,12 @@ class TwoLayerMemory:
             'reflections': reflections,
             'artifacts': artifacts or {},
         }
+        if final_vc_params is not None:
+            run['final_vc_params'] = final_vc_params
+            run['vc_attempts'] = [
+                {key: attempt[key] for key in ('vc_method', 'vc_params', 'metrics')}
+                for attempt in history if 'vc_params' in attempt
+            ]
         # Layer-2 先落盘（LLM 失败也不丢）
         self.runs.append(run)
         self.save_run(run)
@@ -541,7 +550,7 @@ class TwoLayerMemory:
             "你是语音匿名化实验的经验总结助手。根据实验运行细节提炼【任务级经验】，"
             "供以后遇到同类下游任务时直接参考（选什么匿名方法、避开什么）。只输出 JSON。"
             "描述方法时类别必须准确：NeuralVC 是神经声线转换（非重合成），"
-            "只有 Resyn/cosyvoice_tts 是 TTS 重合成——严禁把 NeuralVC 归为「TTS类」。"
+            "只有 Resyn 是 TTS 重合成——严禁把 NeuralVC 归为「TTS类」。"
             "解读指标时方向必须正确（见下方指标方向参考）：尤其 EER 是匿名指标，"
             "越接近 50% 匿名效果越好——严禁把 EER 当『错误率越低越好』。"
         )
@@ -553,6 +562,9 @@ class TwoLayerMemory:
             f"原始音频下游基线: baseline_bacc={run.get('baseline_bacc')}",
             f"本次尝试 {run.get('attempts')} 次，最终方法: {run.get('final_vc_method')}",
         ]
+        if run.get('vc_attempts'):
+            facts.append("VC attempts with parameters and metrics: " + json.dumps(run['vc_attempts'], ensure_ascii=False))
+            facts.append("Selected parameters: " + json.dumps(run['final_vc_params'], ensure_ascii=False))
         if run.get('downstream_bacc_by_method'):
             per = ", ".join(f"{m}={_fmt(v)}" for m, v in
                             run['downstream_bacc_by_method'].items())
@@ -639,12 +651,8 @@ class TwoLayerMemory:
 
     # ── recall（注入 prompt）────────────────────────────────────────
 
-    def recall_for_prompt(self, task_meta=None, exclude_dataset=None):
-        """生成注入 prompt 的「历史经验」文本块（由粗到细两段）。空 memory 返回 ''。"""
-        if not self.experiences and not self.runs:
-            return ''
-
-        # ── 段1：Layer-1 任务级经验（粗）──
+    def recall_records(self, task_meta=None, exclude_dataset=None):
+        """Select the same experiences and runs for the decision prompt and the demo."""
         exps = [e for e in self.experiences
                 if not (exclude_dataset and e.get('dataset') == exclude_dataset)]
         exps.sort(key=lambda e: e.get('updated_at') or '', reverse=True)
@@ -654,6 +662,32 @@ class TwoLayerMemory:
             keep = [e for e in exps if cur_type and e.get('task_type') == cur_type]
             keep += [e for e in exps if e not in keep][:MAX_EXPERIENCES_IN_PROMPT - len(keep)]
             exps, truncated = keep[:MAX_EXPERIENCES_IN_PROMPT], True
+        dataset = (task_meta or {}).get('dataset')
+        runs = []
+        for r in reversed(self.runs):
+            if exclude_dataset and r.get('dataset') == exclude_dataset:
+                continue
+            if cur_type and r.get('task_type') == cur_type:
+                runs.append(r)
+            elif dataset and r.get('dataset') == dataset:
+                runs.append(r)
+            if len(runs) >= MAX_RUNS_IN_LAYER2_PROMPT:
+                break
+        related = bool(runs)
+        if not related:
+            # 无同领域记录（或无法分类）→ 最近几条兜底，明确标注非同类
+            runs = [r for r in reversed(self.runs)
+                    if not (exclude_dataset and r.get('dataset') == exclude_dataset)]
+            runs = runs[:MAX_RUNS_IN_LAYER2_PROMPT]
+        return exps, runs, truncated, related
+
+    def recall_for_prompt(self, task_meta=None, exclude_dataset=None):
+        """生成注入 prompt 的「历史经验」文本块（由粗到细两段）。空 memory 返回 ''。"""
+        if not self.experiences and not self.runs:
+            return ''
+
+        exps, runs, truncated, related = self.recall_records(task_meta, exclude_dataset)
+        cur_type = (task_meta or {}).get('task_type')
         exp_lines = []
         for e in exps:
             head = (f"- [{e.get('task_type')}] {e.get('dataset')} "
@@ -681,27 +715,12 @@ class TwoLayerMemory:
                         + "\n".join(exp_lines))
 
         # ── 段2：Layer-2 同类任务运行明细（细）──
-        dataset = (task_meta or {}).get('dataset')
-        runs = []
-        for r in reversed(self.runs):
-            if exclude_dataset and r.get('dataset') == exclude_dataset:
-                continue
-            if cur_type and r.get('task_type') == cur_type:
-                runs.append(r)
-            elif dataset and r.get('dataset') == dataset:
-                runs.append(r)
-            if len(runs) >= MAX_RUNS_IN_LAYER2_PROMPT:
-                break
-        l2_note = ''
-        if not runs:
-            # 无同领域记录（或无法分类）→ 最近几条兜底，明确标注非同类
-            runs = [r for r in reversed(self.runs)
-                    if not (exclude_dataset and r.get('dataset') == exclude_dataset)]
-            runs = runs[:MAX_RUNS_IN_LAYER2_PROMPT]
-            l2_note = '（暂无同领域记录，以下为其他领域最近运行，仅供参考）'
+        l2_note = '' if related else '（暂无同领域记录，以下为其他领域最近运行，仅供参考）'
         run_lines = []
         for r in runs:
             final = r.get('final_vc_method') or 'N/A'
+            if r.get('final_vc_params'):
+                final += ' ' + json.dumps(r['final_vc_params'], ensure_ascii=False)
             per_method = "; ".join(
                 f"{m}→" + ",".join(f"{k}={_fmt(v)}" for k, v in sorted((ms or {}).items()))
                 for m, ms in (r.get('vc_results') or {}).items())
@@ -821,10 +840,7 @@ def _clean_methods(methods, allow_none=True):
     seq = [methods] if single else list(methods)
     out = []
     # 小写别名（含旧方法名）→ 规范名（大小写与结果目录一致）
-    _ALIAS = {'asr_tts': 'Resyn', 'asrtts': 'Resyn', 'fishaudio': 'Resyn',
-              'fishaudio_tts': 'Resyn', 'seedvc': 'NeuralVC',
-              'mcadams': 'formant_lpc', 'formant': 'formant_spec',
-              'cosyvoice': 'cosyvoice_tts'}
+    _ALIAS = {'asr_tts': 'Resyn', 'asrtts': 'Resyn', 'fishaudio': 'Resyn', **ALIASES}
     _CANONICAL = {m.lower(): m for m in KNOWN_VC_METHODS}
     for m in seq:
         if not isinstance(m, str):

@@ -1,13 +1,13 @@
 """
-reflexion_agent.py — Reflexion 架构的语音匿名 Agent
+casa_downstream.py — CASA 语音匿名 Agent
 
 执行 → 评估 → 反思 → 调整 → 重试，直到满足用户目标。根据评估指标动态调整 VC 方法。
 
 依赖：agent.py（pipeline 函数）、utils/（logger、内存隔离）
 
 用法示例：
-    python reflexion_agent.py -i /path/to/audio -r "匿名化，不要改变韵律，SNR尽量高，不需要内容匿名"
-    python reflexion_agent.py -i /path/to/audio -r "..." --max_reflections 3
+    python casa_downstream.py -i /path/to/audio -r "匿名化，不要改变韵律，SNR尽量高，不需要内容匿名"
+    python casa_downstream.py -i /path/to/audio -r "..." --max_reflections 3
 """
 
 import os
@@ -15,6 +15,7 @@ import re
 import json
 import time
 import argparse
+from configs.config_loader import get_asr_config, uses_character_timestamps
 from utils.vc_names import canonical_method
 import shutil
 import sys
@@ -24,13 +25,14 @@ from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from utils.agent_selection import final_vc_from as _final_vc_from
+from utils.agent_selection import final_attempt_from
+from utils.vc_parameters import VC_DEFAULTS, VC_PARAMETER_GUIDE, resolve_vc_params, vc_output_name
 
 from agent import (
     trans, mask, vc,
     _has_audio, _has_json,
     _ASR_CONDA_ENV, _VC_CONDA_ENV,
-    SUPPORTED_FORMATS, NO_WER_LANGUAGE,
+    SUPPORTED_FORMATS,
 )
 from utils.logger_example import setup_logger
 from utils.manage_module_memory import run_in_isolation
@@ -60,9 +62,10 @@ DOWNSTREAM_METRIC_DESCRIPTIONS = {
 INITIAL_PLAN_PROMPT = f"""你是语音匿名处理 Agent。根据用户请求生成 JSON 执行计划。
 
 【可用工具】
-- run_transcription: ASR 转录。参数: language(必填，且必须用中文，如"中文"/"英文"/"日文"/"西班牙语"), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。
-- run_mask: 内容匿名（依赖转录）。参数: language(必填，且必须用中文，如"中文"/"英文"/"日文"/"西班牙语")。
-- run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language
+- run_transcription: ASR 转录。参数: language(必填，如 zh/en/ja/es), spk_num(可选，精确说话人数), min_speakers(可选，最少说话人数), max_speakers(可选，最多说话人数)。
+- run_mask: 识别并掩蔽录音中说出的敏感信息（依赖转录）。用户要求保护内容时，将此步骤放在声线转换前，并为转换设置 with_mask=true。参数: language(必填，如 zh/en/ja/es)。
+- run_voice_conversion: 声线转换。参数: method(必填, 可选: {', '.join(VC_METHODS)}), with_mask(bool), language, vc_params (optional).
+{VC_PARAMETER_GUIDE}
 - run_evaluation: 评估。参数: language(必填)
 
 【步骤依赖】
@@ -70,12 +73,14 @@ INITIAL_PLAN_PROMPT = f"""你是语音匿名处理 Agent。根据用户请求生
 - run_voice_conversion 独立，with_mask=true 时需要 mask 输出
 - run_evaluation 依赖 run_transcription，且需要 mask 或 vc 输出
 
+Follow the methods and privacy requirements in the user request. Use historical experience only for choices the request leaves open.
+Write reasoning in the language of the user request. Use a language code such as zh or en for audio.
 【输出格式】在适当位置输出 JSON，以 {{ 开头。
 {{"language":"语言","reasoning":"分析","steps":[{{"tool":"工具名","params":{{}}}}]}}
 
 示例:
 用户: "匿名化英文音频，不需要内容匿名"
-{{"language":"英文","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"英文"}}}},{{"tool":"run_voice_conversion","params":{{"method":"NeuralVC","language":"英文"}}}},{{"tool":"run_evaluation","params":{{"language":"英文"}}}}]}}
+{{"language":"en","reasoning":"跳过mask","steps":[{{"tool":"run_transcription","params":{{"language":"en"}}}},{{"tool":"run_voice_conversion","params":{{"method":"NeuralVC","language":"en"}}}},{{"tool":"run_evaluation","params":{{"language":"en"}}}}]}}
 """
 
 
@@ -111,6 +116,22 @@ class AgentContext:
 
         self.asr_model_used = None
         self.vc_method_used = None
+        self.vc_params = {}
+        self.vc_with_mask = False
+
+    def select_vc(self, method, params, with_mask):
+        self.vc_method_used = method
+        self.vc_params = resolve_vc_params(method, params)
+        self.vc_with_mask = with_mask
+
+    @property
+    def vc_name(self):
+        return vc_output_name(self.vc_method_used or "NeuralVC", self.vc_params)
+
+    @property
+    def vc_audio_dir(self):
+        dirname = f"text+{self.vc_name}" if self.vc_with_mask else self.vc_name
+        return os.path.join(self.output_dir, dirname)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -133,6 +154,15 @@ def _handle_check_directory(ctx, directory, file_type="any"):
             "message": f"找到 {len(files)} 个文件"}
 
 
+def _missing_audio_json(input_dir, json_dir):
+    root = Path(input_dir)
+    return sum(
+        not (Path(json_dir) / audio.relative_to(root).with_suffix(".json")).is_file()
+        for audio in root.rglob("*")
+        if audio.is_file() and audio.suffix.lower() in SUPPORTED_FORMATS
+    )
+
+
 def _handle_transcription(ctx, language, asr_model="", hotwords=None, spk_num=0,
                           min_speakers=None, max_speakers=None):
     hotwords = hotwords or []
@@ -141,11 +171,9 @@ def _handle_transcription(ctx, language, asr_model="", hotwords=None, spk_num=0,
     max_speakers = max_speakers or None
     ctx.logger.debug(f"[handler] _handle_transcription: language={language}, asr_model={asr_model}, hotwords={hotwords}, spk_num={spk_num}, min_speakers={min_speakers}, max_speakers={max_speakers}")
     if not asr_model:
-        try:
-            from configs.config_loader import get_asr_config
-            asr_model = get_asr_config(language)['model']
-        except Exception:
-            asr_model = 'paraformer' if '中文' in language else 'FunASRNano'
+        asr_model = get_asr_config(language)['model']
+    if asr_model not in _ASR_CONDA_ENV:
+        raise ValueError(f'Unknown ASR model: {asr_model}')
     ctx.asr_model_used = asr_model
     ctx.logger.info(f"[Agent] 转录: language={language} model={asr_model}")
     run_in_isolation(
@@ -156,6 +184,9 @@ def _handle_transcription(ctx, language, asr_model="", hotwords=None, spk_num=0,
         min_speakers, max_speakers,
         conda_env=_ASR_CONDA_ENV.get(asr_model),
     )
+    missing = _missing_audio_json(ctx.input_dir, ctx.trans_origin_dir)
+    if missing:
+        return {"success": False, "error": f"Missing transcripts for {missing} input audio files. See the log."}
     return {"success": True, "trans_dir": ctx.trans_origin_dir, "asr_model": asr_model}
 
 
@@ -181,9 +212,12 @@ def _handle_mask(ctx, language, llm_model="", mask_method="noise",
     run_in_isolation(
         mask,
         ctx.trans_origin_dir, ctx.mask_dir, ctx.logger_file,
-        language, custom_prompt, llm_model, group_num, ctx.mode,
+        language, custom_prompt or None, llm_model, group_num, ctx.mode,
         detect_method,
     )
+    missing = _missing_audio_json(ctx.input_dir, ctx.mask_dir)
+    if missing:
+        return {"success": False, "error": f"Missing content mask files for {missing} input audio files. See the log."}
     noise_method = 'formant' if mask_method == 'noise' else 'mute'
     text_only_dir = os.path.join(ctx.output_dir, 'text_only')
     from apply_mask import apply_mask
@@ -194,72 +228,70 @@ def _handle_mask(ctx, language, llm_model="", mask_method="noise",
 
 
 def _handle_voice_conversion(ctx, method, with_mask=False, num_workers=1,
-                             whole_audio=False, language="中文"):
-    ctx.logger.debug(f"[handler] _handle_voice_conversion: method={method}, with_mask={with_mask}, language={language}")
-    ctx.vc_method_used = method
-    vc_output_dir = (os.path.join(ctx.output_dir, f'text+{method}') if with_mask
-                     else os.path.join(ctx.output_dir, method))
-    spk_vc_dir = (os.path.join(ctx.middle_dir, 'spk_audio', f'text_{method}') if with_mask
-                  else os.path.join(ctx.middle_dir, 'spk_audio', f'{method}_only'))
+                             whole_audio=False, language="zh", vc_params=None):
+    method = canonical_method(method)
+    ctx.select_vc(method, vc_params, with_mask)
+    vc_output_dir = ctx.vc_audio_dir
+    name = ctx.vc_name
+    spk_vc_dir = os.path.join(ctx.middle_dir, 'spk_audio', f'text_{name}' if with_mask else f'{name}_only')
     if with_mask and not _has_json(ctx.mask_dir):
         return {"success": False,
                 "error": "with_mask=True 但 mask 结果不存在，请先执行内容匿名步骤"}
     trans_dir_for_vc = ctx.trans_origin_dir if _has_json(ctx.trans_origin_dir) else None
-    ctx.logger.info(f"[Agent] 声线转换: method={method} with_mask={with_mask}")
+    ctx.logger.info(f"[Agent] 声线转换: method={method} vc_params={ctx.vc_params} with_mask={with_mask}")
     run_in_isolation(
         vc,
         ctx.input_dir, vc_output_dir, method,
         trans_dir_for_vc, ctx.logger_file, ctx.mode,
         num_workers,
         ctx.mask_dir if with_mask else None,
-        'noise', language, whole_audio,
+        'noise', language, whole_audio, ctx.vc_params,
         conda_env=_VC_CONDA_ENV.get(method),
     )
+    if not _has_audio(vc_output_dir):
+        return {"success": False, "error": f"No converted audio in {vc_output_dir}"}
     from utils.metrics.spk_audio_extractor import extract_dir as _ext_spk_pair
     _ext_spk_pair(ctx.input_dir, vc_output_dir, ctx.trans_origin_dir,
                   ctx.spk_audio_origin, spk_vc_dir, ctx.logger)
-    return {"success": True, "vc_output_dir": vc_output_dir, "method": method}
+    return {"success": True, "vc_output_dir": vc_output_dir, "method": method, "vc_params": ctx.vc_params}
+
+
+def _cached_metrics(output_dir, mode):
+    import csv
+    path = Path(output_dir) / f'evaluate_{mode}.csv'
+    if path.is_file():
+        try:
+            with path.open(encoding='utf-8') as f:
+                for row in csv.DictReader(f):
+                    if row.get('name') == '-mean-':
+                        return {k: v for k, v in row.items() if k != 'name' and v}
+        except (OSError, ValueError, csv.Error):
+            pass
+    return {}
 
 
 def _handle_evaluation(ctx, language, gt_dir="", subject_map_path="", with_mask=False):
     ctx.logger.debug(f"[handler] _handle_evaluation: language={language}, gt_dir={gt_dir}, subject_map_path={subject_map_path}, with_mask={with_mask}")
-    method = ctx.vc_method_used or 'NeuralVC'
+    method = ctx.vc_name
     text_vc_dir = os.path.join(ctx.output_dir, f'text+{method}')
     vc_only_dir = os.path.join(ctx.output_dir, method)
     text_only   = os.path.join(ctx.output_dir, 'text_only')
 
     if with_mask and _has_audio(text_vc_dir):
         eval_dir, trans_vc, mode_str = text_vc_dir, os.path.join(ctx.middle_dir, f'trans_text+{method}'), f'text_{method}'
-    elif _has_audio(vc_only_dir):
+    elif not with_mask and _has_audio(vc_only_dir):
         eval_dir, trans_vc, mode_str = vc_only_dir, os.path.join(ctx.middle_dir, f'trans_{method}'), method
-    elif with_mask and _has_audio(text_only):
+    elif with_mask and ctx.vc_method_used is None and _has_audio(text_only):
         eval_dir, trans_vc, mode_str = text_only, os.path.join(ctx.middle_dir, 'trans_text'), 'text'
     else:
         return {"success": False, "error": "找不到匿名后音频，请先执行 mask 或 vc 步骤"}
 
-    # ── 跳过：已有 evaluate CSV 且包含 -mean- 行 ──
-    import csv as _csv
-    eval_csv = os.path.join(ctx.output_dir, f'evaluate_{mode_str}.csv')
-    if os.path.exists(eval_csv):
-        try:
-            with open(eval_csv, 'r') as f:
-                reader = _csv.DictReader(f)
-                for row in reader:
-                    if row.get('name') == '-mean-':
-                        results = {k: v for k, v in row.items() if k != 'name' and v}
-                        ctx.logger.info(f"[跳过] 评估 CSV 已存在: {eval_csv}")
-                        return {
-                            "success": True,
-                            "eval_dir": eval_dir,
-                            "mode": mode_str,
-                            "metric_cols": list(results.keys()),
-                            "mean_results": results,
-                            "skipped": True,
-                        }
-        except Exception:
-            pass  # 解析失败则正常跑评估
+    cached = _cached_metrics(ctx.output_dir, mode_str)
+    if cached:
+        return {"success": True, "eval_dir": eval_dir, "mode": mode_str,
+                "metric_cols": list(cached), "mean_results": cached, "skipped": True}
 
-    asr_model = ctx.asr_model_used or 'paraformer'
+    asr_model = ctx.asr_model_used or get_asr_config(language)['model']
     ctx.logger.info(f"[Agent] 评估: eval_dir={eval_dir}")
 
     # ── 先评估原始音频（用于对比基线） ──
@@ -285,7 +317,7 @@ def _handle_evaluation(ctx, language, gt_dir="", subject_map_path="", with_mask=
         logger=ctx.logger, logger_file=ctx.logger_file,
         _trans_env=_ASR_CONDA_ENV.get(asr_model),
         gt_dir=gt_dir or None, subject_map_path=subject_map_path or None,
-        mode=mode_str, wer=None if language in NO_WER_LANGUAGE else True,
+        mode=mode_str, wer=None if uses_character_timestamps(language) else True,
     )
 
     if df is None:
@@ -320,7 +352,7 @@ TOOLS = [
         name="run_transcription",
         description="ASR 转录：将音频转为带时间戳的 JSON 文本",
         parameters={
-            "language": "string (必填且必须为汉字, 如 中文/英文/日文/西班牙语)",
+            "language": "string (必填, 语言代码如 zh/en/ja/es)",
             "asr_model": "string (可选, 留空自动选择)",
             "hotwords": "list (可选, 热词列表)",
             "spk_num": "int (可选, 精确说话人数量, 0=自动)",
@@ -347,7 +379,8 @@ TOOLS = [
         name="run_voice_conversion",
         description="声线转换：改变说话人声线特征",
         parameters={
-            "method": "string (必填, formant_lpc/formant_spec/pitch/combined/NeuralVC/Resyn/cosyvoice_tts)",
+            "method": f"string (required, {', '.join(VC_DEFAULTS)})",
+            "vc_params": VC_PARAMETER_GUIDE,
             "with_mask": "bool (可选, 默认 false)",
             "num_workers": "int (可选, 默认1)",
             "whole_audio": "bool (可选, 默认 false)",
@@ -428,13 +461,9 @@ def _parse_json_output(text: str) -> dict:
 
 
 def _validate_plan(plan: dict) -> Optional[str]:
-    if isinstance(plan, dict):
-        for step in plan.get("steps", []):
-            if isinstance(step, dict) and step.get("tool") == "run_voice_conversion":
-                params = step.get("params")
-                if isinstance(params, dict) and isinstance(params.get("method"), str):
-                    params["method"] = canonical_method(params["method"])
-    """验证 plan 结构。"""
+    """Validate tool names and method-specific parameters before execution."""
+    if not isinstance(plan, dict):
+        return "Expected a JSON plan"
     if plan.get("error"):
         return f"无法从 LLM 输出中提取执行计划，原始输出:\n{plan.get('raw', '')}"
     if "steps" not in plan:
@@ -442,9 +471,23 @@ def _validate_plan(plan: dict) -> Optional[str]:
     if not isinstance(plan["steps"], list) or len(plan["steps"]) == 0:
         return "steps 为空或格式不正确"
     for i, s in enumerate(plan["steps"]):
+        if not isinstance(s, dict) or not isinstance(s.get("params", {}), dict):
+            return f"Invalid tool call at step {i+1}"
         name = s.get("tool", "")
-        if name not in TOOL_BY_NAME:
+        if name == "run_voice_conversion":
+            params = s.setdefault("params", {})
+            method = params.get("method")
+            if not isinstance(method, str):
+                return "run_voice_conversion requires a method name"
+            params["method"] = canonical_method(method)
+            try:
+                params["vc_params"] = resolve_vc_params(params["method"], params.get("vc_params"))
+            except ValueError as exc:
+                return str(exc)
+        if not isinstance(name, str) or name not in TOOL_BY_NAME:
             return f"步骤 {i+1} 包含未知工具: {name}"
+    if sum(step["tool"] == "run_voice_conversion" for step in plan["steps"]) > 1:
+        return "Plan one VC configuration at a time. Evaluate additional settings during reflection."
     return None
 
 
@@ -452,30 +495,32 @@ def _validate_plan(plan: dict) -> Optional[str]:
 # 反思 Prompt
 # ═══════════════════════════════════════════════════════════════════════════════
 
-REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评估指标和用户目标，决定是否需要更换声线转换(VC)方法。
+REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评估指标和用户目标，决定是否更换声线转换(VC)方法或调整其参数。
 
 【可用 VC 方法】
 {chr(10).join(f'- {m}' for m in VC_METHODS)}
+{VC_PARAMETER_GUIDE}
 
 【指标含义】
 {chr(10).join(f'- {k}: {v}' for k, v in METRIC_DESCRIPTIONS.items())}
 
 
 【决策规则】
-1. 若用户指定了具体方法（如“用NeuralVC”），且历史中该方法已成功，则直接结束（done=true）。
-2. 若用户只提出抽象目标（如“SNR尽量高”），则用指标判定：当前方法若满足目标即结束；否则从**未尝试过**的方法中另选一个重试。
+1. 若用户指定了具体方法（如“用NeuralVC”），且该方法与参数已经满足用户目标，则直接结束（done=true）。
+2. 若用户只提出抽象目标（如“SNR尽量高”），则用指标判定：当前方法若满足目标即结束；否则可调整当前方法的参数，或尝试另一方法。
 3. 若用户要求某指标“最高/最低”，需要对比所有方法后再决定，不可提前结束。
-4. 重复选择已尝试过的方法将**直接终止后续探索**，务必仅在确信它已是最优选择时使用。
+4. 重复选择相同方法和相同参数表示回到该次结果。若同一方法有多次尝试，用 best_vc_params 指明选中的参数。
 5. 历史仅记录“已尝试”，不代表“失败”，不要因此否定某个方法。
 6. 只要满足用户明确提出的目标，无需在意未提及的指标。
 
+Write reason and summary in the language of the user request.
 【输出格式】只输出 JSON，以 {{ 开头、以 }} 结尾。
 
 满意时:
 {{"done":true,"reason":"简短说明","summary":"最终结果摘要","best_vc_method":"最终认定的最优方法名（从已尝试方法中选，不一定是最后尝试的那个）"}}
 
 不满意时:
-{{"done":false,"reason":"简短说明","new_vc_method":"方法名"}}
+{{"done":false,"reason":"简短说明","new_vc_method":"方法名","vc_params":{{}}}}
 
 示例:
 用户要求"用NeuralVC"，NeuralVC已执行:
@@ -483,6 +528,9 @@ REFLECTION_SYSTEM_PROMPT = f"""你是一个语音匿名处理专家。根据评�
 
 遍历全部方法后认定 pitch 综合最优（当前最后尝试的是 formant_spec）:
 {{"done":true,"reason":"pitch在匿名与下游可用性之间平衡最好","summary":"pitch: EER=42%, bacc=0.67","best_vc_method":"pitch"}}
+
+用户希望减小变调幅度，当前 pitch 使用了 -3 个半音:
+{{"done":false,"reason":"尝试较小的变调幅度","new_vc_method":"pitch","vc_params":{{"n_steps":-1.5}}}}
 
 用户要求"SNR尽量高"，当前 pitch SNR=15dB:
 {{"done":false,"reason":"pitch的SNR只有15dB，NeuralVC通常SNR更高","new_vc_method":"NeuralVC"}}
@@ -524,17 +572,12 @@ def _history_to_str(history: list) -> str:
     lines = []
     for i, h in enumerate(history):
         m = h.get("metrics", {})
-        for k, v in m.items():
-            try:
-                m[k] = float(v)
-            except (ValueError, TypeError):
-                pass
-        m_str = ", ".join(f"{k}={f'{v:.3g}'}" for k, v in m.items()) if m else "无指标"
+        m_str = ", ".join(f"{k}={v}" for k, v in m.items()) or "无指标"
         reason = h.get("reason", "")
         line = ""
         if reason:
             line += f"第{i+1}次:\n[思考]: {reason}\n"
-        line += f"[结果]: VC={h['vc_method']} | {m_str}"
+        line += f"[结果]: VC={h['vc_method']} vc_params={json.dumps(h.get('vc_params', {}))} | {m_str}"
 
         lines.append(line)
     return "\n".join(lines)
@@ -566,10 +609,10 @@ def _llm_infer_worker(model_name, sys_prompt, user_prompt, output_file, gen_kwar
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# ReflexionAgent
+# CASA
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class ReflexionAgent:
+class CASA:
     def __init__(self, input_dir, output_dir, middle_dir, llm_model=None, mode='INFO',
                  temperature=0.01, max_new_tokens=2048, repetition_penalty=1.05, open_source=True,
                  memory_path=None, use_memory=True, memory_exclude_dataset=None):
@@ -594,7 +637,7 @@ class ReflexionAgent:
         }
 
         os.makedirs(self.output_dir, exist_ok=True)
-        self.logger, self.logger_file = setup_logger(self.output_dir, 'reflexion', mode)
+        self.logger, self.logger_file = setup_logger(self.output_dir, 'casa', mode)
         self.ctx = AgentContext(self.input_dir, self.output_dir, self.middle_dir,
                                 mode, self.logger, self.logger_file)
 
@@ -675,7 +718,7 @@ class ReflexionAgent:
                 err = validator(result)
                 if err:
                     self.logger.warning(f"[LLM 重试] 第 {attempt+1}/{max_retries} 次验证失败: {err}")
-                    current_prompt = user_prompt + _RETRY_HINT
+                    current_prompt = f"{user_prompt}\n{err}" + _RETRY_HINT
                     continue
 
             self.logger.debug(f"[LLM 重试] 第 {attempt+1} 次调用成功")
@@ -686,46 +729,33 @@ class ReflexionAgent:
 
     # ── 下游任务 ────────────────────────────────────────────────────────────
 
-    def _resolve_anon_audio_dir(self):
-        """找到当前 VC 输出的匿名音频目录。"""
-        method = self.ctx.vc_method_used or 'NeuralVC'
-        from agent import _has_audio, _has_json
-        has_mask = _has_json(self.ctx.mask_dir)
-        candidates = []
-        if has_mask:
-            candidates.append(os.path.join(self.output_dir, f'text+{method}'))
-        # 当前 VC 方法的输出目录优先于 text_only，避免读到旧的 text_only 结果
-        candidates.append(os.path.join(self.output_dir, method))
-        if has_mask:
-            candidates.append(os.path.join(self.output_dir, 'text_only'))
-        for d in candidates:
-            if _has_audio(d):
-                return d
-        return None
-
     def _prepare_downstream_data_json(self, anon_audio_dir):
         """读取原始 data.json，将 wav_path 替换为匿名音频路径，保存在音频目录下。"""
-        original = json.load(open(self.downstream_data_json, "r", encoding="utf-8"))
-        modified = []
-        for item in original:
-            entry = dict(item)
-            orig_path = entry.get("wav_path", "")
-            if orig_path:
-                orig_path = os.path.abspath(orig_path)
-                # 保留 input_dir 下的相对子目录结构（VC 输出结构一致）
-                try:
-                    rel = os.path.relpath(orig_path, self.input_dir)
-                    anon_path = os.path.join(anon_audio_dir, rel if not rel.startswith("..") else os.path.basename(orig_path))
-                except ValueError:
-                    anon_path = os.path.join(anon_audio_dir, os.path.basename(orig_path))
-                if os.path.exists(anon_path):
-                    entry["wav_path"] = os.path.abspath(anon_path)
-                else:
-                    self.logger.warning(f"[Downstream] 未找到匿名音频: {anon_path}，保留原路径")
-            modified.append(entry)
-
+        with open(self.downstream_data_json, encoding="utf-8") as f:
+            entries = json.load(f)
+        if not isinstance(entries, list) or not any(isinstance(e, dict) and "wav_path" in e for e in entries):
+            # Custom downstream scripts may use their own metadata format.
+            return self.downstream_data_json
+        converted_dir = Path(anon_audio_dir).resolve()
+        source_dir = Path(self.input_dir).resolve()
+        for entry in entries:
+            if not isinstance(entry, dict) or not entry.get("wav_path"):
+                continue
+            source = Path(entry["wav_path"])
+            if source.is_absolute():
+                relative = source.relative_to(source_dir) if source.is_relative_to(source_dir) else Path(source.name)
+            else:
+                relative = source
+            converted = converted_dir / relative
+            if not converted.is_file():
+                converted = converted.with_suffix(".wav")
+            if not converted.is_file() or not converted.resolve().is_relative_to(converted_dir):
+                self.logger.warning(f"[Downstream] Missing converted audio for {source}, skipping evaluation")
+                return None
+            entry["wav_path"] = str(converted)
         out_path = os.path.join(anon_audio_dir, "downstream_input_data.json")
-        json.dump(modified, open(out_path, "w", encoding="utf-8"), ensure_ascii=False, indent=4)
+        with open(out_path, "w", encoding="utf-8") as f:
+            json.dump(entries, f, ensure_ascii=False, indent=2)
         self.logger.info(f"[Downstream] 已生成: {out_path}")
         return out_path
 
@@ -858,18 +888,13 @@ class ReflexionAgent:
 
     def _run_downstream_for_current_vc(self):
         """一键：找匿名音频 → 生成 data.json → 跑下游 → 返回扁平指标。"""
-        method = self.ctx.vc_method_used or 'NeuralVC'
-        anon_dir = self._resolve_anon_audio_dir()
-        if not anon_dir:
-            # 匿名音频目录不存在（被跳过），直接用 VC 方法名构造路径
-            # downstream 脚本从 summary JSON 读结果，不需要实际音频
-            for candidate in [f'text+{method}', method, 'text_only']:
-                path = os.path.join(self.output_dir, candidate)
-                os.makedirs(path, exist_ok=True)
-                anon_dir = path
-                break
-            self.logger.info(f"[Downstream] 匿名音频目录不存在，构造路径: {anon_dir}")
-        modified = self.downstream_data_json
+        anon_dir = self.ctx.vc_audio_dir
+        if not _has_audio(anon_dir):
+            self.logger.warning(f"[Downstream] No converted audio in {anon_dir}")
+            return {}
+        modified = self._prepare_downstream_data_json(anon_dir)
+        if modified is None:
+            return {}
         raw = self._run_downstream_script(modified, anon_dir)
         if raw:
             ba = raw.get("balanced_accuracy", {})
@@ -1042,34 +1067,18 @@ class ReflexionAgent:
         results = []
         eval_metrics = {}
 
-        # ── 全局跳过：evaluate CSV 已存在则跳过所有步骤 ──
-        vc_method = None
         has_mask = any(s["tool"] == "run_mask" for s in steps)
-        for s in steps:
-            if s["tool"] == "run_voice_conversion":
-                vc_method = s["params"].get("method", "")
+        for step in steps:
+            if step["tool"] == "run_voice_conversion":
+                params = step["params"]
+                has_mask = has_mask or params.get("with_mask", False)
+                self.ctx.select_vc(params["method"], params.get("vc_params"), has_mask)
+                mode = f"text_{self.ctx.vc_name}" if has_mask else self.ctx.vc_name
+                cached = _cached_metrics(self.output_dir, mode)
+                if cached and _has_audio(self.ctx.vc_audio_dir):
+                    self.logger.info(f"[Cache] Reusing evaluate_{mode}.csv")
+                    return {"success": True, "steps_results": [], "eval_metrics": cached}
                 break
-        if vc_method:
-            import csv as _csv
-            # 按优先级查找: text+method > method
-            csv_candidates = [f'evaluate_text_{vc_method}.csv' if has_mask else f'evaluate_{vc_method}.csv']
-            for csv_name in csv_candidates:
-                eval_csv = os.path.join(self.output_dir, csv_name)
-                if os.path.exists(eval_csv):
-                    try:
-                        with open(eval_csv, 'r') as f:
-                            reader = _csv.DictReader(f)
-                            for row in reader:
-                                if row.get('name') == '-mean-':
-                                    eval_metrics = {k: v for k, v in row.items() if k != 'name' and v}
-                                    self.ctx.vc_method_used = vc_method
-                                    self.logger.info(
-                                        f"[全局跳过] {csv_name} 已存在，跳过所有步骤"
-                                    )
-                                    print(f"  [全局跳过] {csv_name} 已存在，跳过所有步骤")
-                                    return {"success": True, "steps_results": [], "eval_metrics": eval_metrics}
-                    except Exception:
-                        pass
 
         # ── 注入 with_mask 到评估步骤 ──
         for step in steps:
@@ -1093,7 +1102,12 @@ class ReflexionAgent:
                 for j in range(i + 1, len(steps)):
                     later = steps[j]
                     later_tool = TOOL_BY_NAME.get(later["tool"])
-                    if later_tool and tool_name in later_tool.dependencies:
+                    masked_conversion = (
+                        tool_name in ("run_transcription", "run_mask")
+                        and later["tool"] == "run_voice_conversion"
+                        and later.get("params", {}).get("with_mask")
+                    )
+                    if masked_conversion or (later_tool and tool_name in later_tool.dependencies):
                         self.logger.debug(f"[依赖跳过] 步骤 {j+1} {later['tool']} 依赖失败的 {tool_name}，跳过")
                         print(f"  → 跳过 [{j+1}/{len(steps)}] {later['tool']}")
                         results.append({"step": later["tool"], "ok": False, "elapsed": 0,
@@ -1119,20 +1133,8 @@ class ReflexionAgent:
             sys_prompt += f"\n\n【下游任务指标（以下指标来自匿名后音频的下游分类任务）】\n{extra}"
 
         # ── 读取原始音频基线指标 ──
-        origin_str = ""
-        import csv as _csv
-        origin_csv = os.path.join(self.output_dir, 'evaluate_origin.csv')
-        if os.path.exists(origin_csv):
-            try:
-                with open(origin_csv, 'r') as f:
-                    reader = _csv.DictReader(f)
-                    for row in reader:
-                        if row.get('name') == '-mean-':
-                            origin_metrics = {k: v for k, v in row.items() if k != 'name' and v}
-                            origin_str = f"\n【原始音频基线指标】\n{_metrics_to_str(origin_metrics)}"
-                            break
-            except Exception:
-                pass
+        origin_metrics = _cached_metrics(self.output_dir, 'origin')
+        origin_str = f"\n【原始音频基线指标】\n{_metrics_to_str(origin_metrics)}" if origin_metrics else ""
 
         # ── baseline 下游指标 ──
         baseline_ds_str = ""
@@ -1167,7 +1169,7 @@ class ReflexionAgent:
 【历史尝试】
 {_history_to_str(history)}
 
-请根据用户目标和当前指标，决定是否需要更换 VC 方法。输出 JSON:"""
+请根据用户目标和当前指标，决定是否更换 VC 方法或调整参数。输出 JSON:"""
 
         self.logger.info("向 LLM 请求反思决策...")
 
@@ -1175,14 +1177,24 @@ class ReflexionAgent:
             for key in ("new_vc_method", "best_vc_method"):
                 if isinstance(d.get(key), str):
                     d[key] = canonical_method(d[key])
-            if "done" not in d:
-                return "缺少 'done' 字段"
-            if not d["done"] and "new_vc_method" not in d:
-                return "done=false 时缺少 'new_vc_method' 字段"
-            if d.get("done") and "best_vc_method" in d:
-                best = d["best_vc_method"]
-                if best not in VC_METHODS:
-                    return f"best_vc_method={best!r} 不是可用方法"
+            if not isinstance(d.get("done"), bool):
+                return "done must be true or false"
+            if d["done"] and "best_vc_method" not in d:
+                return "best_vc_params requires best_vc_method" if "best_vc_params" in d else None
+            method = d.get("best_vc_method" if d["done"] else "new_vc_method")
+            if not isinstance(method, str) or method not in VC_DEFAULTS:
+                return f"Unknown voice conversion method: {method!r}"
+            key = "best_vc_params" if d["done"] else "vc_params"
+            if key in d:
+                try:
+                    d[key] = resolve_vc_params(method, d[key])
+                except ValueError as exc:
+                    return str(exc)
+            if d["done"] and not any(
+                h["vc_method"] == method and h.get("metrics") and
+                (key not in d or h.get("vc_params") == d[key]) for h in history
+            ):
+                return "Select an evaluated method and parameter combination from history"
             return None
 
         decision = self._call_llm_with_retry(
@@ -1199,7 +1211,7 @@ class ReflexionAgent:
 
     def run(self, user_request: str, max_reflections: int = 3) -> dict:
         """
-        Reflexion 主循环：初始计划 → 执行 → 反思 → 调整 → 重试。
+        CASA 主循环：初始计划 → 执行 → 反思 → 调整 → 重试。
         """
         self.logger.debug(f"[启动] input_dir={self.input_dir}")
         self.logger.debug(f"[启动] output_dir={self.output_dir}")
@@ -1237,9 +1249,12 @@ class ReflexionAgent:
         self.logger.info(f"[计划] steps={[s['tool'] for s in steps]}")
 
         initial_vc = None
+        initial_params = {}
         for s in steps:
             if s["tool"] == "run_voice_conversion":
                 initial_vc = s["params"].get("method", "NeuralVC")
+                initial_params = resolve_vc_params(initial_vc, s["params"].get("vc_params"))
+                with_mask = with_mask or s["params"].get("with_mask", False)
                 break
 
         print(f"语言: {language}")
@@ -1262,11 +1277,6 @@ class ReflexionAgent:
             print("初始计划执行失败，无法进行反思")
             return {"success": False, "attempts": 1, "history": []}
 
-        if not current_metrics:
-            self.logger.warning("[主循环] 未获得评估指标，无法进行反思")
-            print("未获得评估指标，无法进行反思")
-            return {"success": True, "attempts": 1, "history": []}
-
         # ── baseline 下游评估（原始音频）──
         baseline_ds = {}
         if self.downstream_data_json and self.downstream_script:
@@ -1287,11 +1297,13 @@ class ReflexionAgent:
                 print(f"  下游: bacc={ds_metrics.get('downstream_bacc', 'N/A')}, "
                       f"f1={ds_metrics.get('downstream_f1', 'N/A')}")
 
-        # ── 3. Reflexion 循环 ───────────────────────────────────────────────
-        history = [{"vc_method": initial_vc, "metrics": current_metrics, "reason": reasoning}]
+        # ── 3. CASA 循环 ───────────────────────────────────────────────
+        history = [{"vc_method": initial_vc, "vc_params": initial_params, "metrics": current_metrics, "reason": reasoning}]
         final_decision = None  # LLM 的最终裁决（done=true 的 best_vc_method / 回退分支选择）
 
-        for reflection_round in range(max_reflections):
+        if not current_metrics:
+            self.logger.info("No evaluation metrics available for reflection.")
+        for reflection_round in range(max_reflections if current_metrics else 0):
             self.logger.debug(f"[反思循环] 第 {reflection_round + 1}/{max_reflections} 轮")
             print(f"\n{'='*55}")
             print(f"反思 #{reflection_round + 1}")
@@ -1315,55 +1327,29 @@ class ReflexionAgent:
                 break
 
             new_vc = decision.get("new_vc_method")
-            if not new_vc or new_vc not in VC_METHODS:
+            if new_vc not in VC_DEFAULTS:
                 self.logger.warning(f"[反思] LLM 返回无效 VC 方法: {new_vc}，终止反思")
                 print(f"LLM 返回了无效的 VC 方法: {new_vc}，终止反思")
                 break
 
-            tried = [h["vc_method"] for h in history]
-            if new_vc in tried:
-                # LLM 选择了已试过的方法 → 视为最终决策，回退到该方法
-                for h in history:
-                    if h["vc_method"] == new_vc and h.get("metrics"):
-                        current_metrics = h["metrics"]
-                        self.ctx.vc_method_used = new_vc
-                        break
-                final_decision = {"best_vc_method": new_vc}
-                reason = decision.get("reason", f"回退到已试过的方法 {new_vc}")
-                print(f"\n✅ 最终选择: {new_vc}（已试过，LLM 认为最优）")
-                print(f"   原因: {reason}")
-                self.logger.info(f"[反思] 回退到 {new_vc}，LLM 认为较优")
+            new_params = resolve_vc_params(new_vc, decision.get("vc_params"))
+            if any(h["vc_method"] == new_vc and h["vc_params"] == new_params and h.get("metrics") for h in history):
+                final_decision = {"best_vc_method": new_vc, "best_vc_params": new_params}
+                self.logger.info(f"[反思] 选择已评估的结果: {new_vc} {new_params}")
                 break
 
+            self.ctx.select_vc(new_vc, new_params, with_mask)
             self.logger.debug(f"[反思] VC 方法切换: {history[-1]['vc_method']} → {new_vc}")
 
             print(f"\n更换 VC 方法: {history[-1]['vc_method']} → {new_vc}")
             print(f"{'='*55}")
 
-            # ── 跳过：该方法的 evaluate CSV 已存在 ──
-            import csv as _csv
-            skip_csv = None
-            for _csv_name in [f'evaluate_text_{new_vc}.csv' if with_mask else f'evaluate_{new_vc}.csv']:
-                _csv_path = os.path.join(self.output_dir, _csv_name)
-                if os.path.exists(_csv_path):
-                    try:
-                        with open(_csv_path, 'r') as f:
-                            reader = _csv.DictReader(f)
-                            for row in reader:
-                                if row.get('name') == '-mean-':
-                                    current_metrics = {k: v for k, v in row.items() if k != 'name' and v}
-                                    skip_csv = _csv_name
-                                    break
-                    except Exception:
-                        pass
-                if skip_csv:
-                    break
-
-            if skip_csv:
-                self.ctx.vc_method_used = new_vc
-                print(f"  [跳过] {skip_csv} 已存在，直接读取指标")
-                self.logger.info(f"[跳过] {skip_csv} 已存在，直接读取指标")
-                history.append({"vc_method": new_vc, "metrics": current_metrics, "reason": reason})
+            mode = f"text_{self.ctx.vc_name}" if with_mask else self.ctx.vc_name
+            cached = _cached_metrics(self.output_dir, mode)
+            if cached and _has_audio(self.ctx.vc_audio_dir):
+                current_metrics = cached
+                self.logger.info(f"[Cache] Reusing evaluate_{mode}.csv")
+                history.append({"vc_method": new_vc, "vc_params": new_params, "metrics": current_metrics, "reason": reason})
                 # 下游也要读已有结果
                 if self.downstream_data_json and self.downstream_script:
                     print(f"  下游任务 ...", flush=True)
@@ -1375,7 +1361,7 @@ class ReflexionAgent:
                 continue
 
             print(f"执行: vc({new_vc}) → eval")
-            vc_step = {"tool": "run_voice_conversion", "params": {"method": new_vc, "language": language, "with_mask": with_mask}}
+            vc_step = {"tool": "run_voice_conversion", "params": {"method": new_vc, "vc_params": new_params, "language": language, "with_mask": with_mask}}
             eval_params = {"language": language, "with_mask": with_mask}
             if self.gt_dir:
                 eval_params["gt_dir"] = self.gt_dir
@@ -1391,7 +1377,7 @@ class ReflexionAgent:
                 print(f"  [1/2] run_voice_conversion  完成 ({elapsed:.1f}s)")
             else:
                 print(f"  [1/2] run_voice_conversion  失败: {result.get('error', '')}")
-                history.append({"vc_method": new_vc, "metrics": {}, "reason": reason})
+                history.append({"vc_method": new_vc, "vc_params": new_params, "metrics": {}, "reason": reason})
                 continue
 
             print(f"  [2/2] run_evaluation ...", flush=True)
@@ -1401,11 +1387,11 @@ class ReflexionAgent:
             else:
                 self.logger.error(f"[重试] 评估失败: {result.get('error', '')}")
                 print(f"  [2/2] run_evaluation  失败: {result.get('error', '')}")
-                history.append({"vc_method": new_vc, "metrics": {}, "reason": reason})
+                history.append({"vc_method": new_vc, "vc_params": new_params, "metrics": {}, "reason": reason})
                 continue
 
             current_metrics = result.get("mean_results", {})
-            history.append({"vc_method": new_vc, "metrics": current_metrics, "reason": reason})
+            history.append({"vc_method": new_vc, "vc_params": new_params, "metrics": current_metrics, "reason": reason})
             self.ctx.vc_method_used = new_vc
             self.logger.debug(f"[重试] 新指标: {json.dumps(current_metrics, ensure_ascii=False)}")
 
@@ -1418,14 +1404,16 @@ class ReflexionAgent:
                     print(f"  下游任务  完成: bacc={ds_metrics.get('downstream_bacc', 'N/A')}, "
                           f"f1={ds_metrics.get('downstream_f1', 'N/A')}")
         else:
-            self.logger.warning(f"[主循环] 达到最大反思次数 ({max_reflections})")
-            print(f"\n达到最大反思次数 ({max_reflections})，使用最后的结果")
+            if current_metrics and max_reflections:
+                self.logger.info(f"[主循环] 达到最大反思次数 ({max_reflections})")
 
         # ── 4. 最终汇总 ─────────────────────────────────────────────────────
-        final_vc = _final_vc_from(final_decision, history)
-        self.ctx.vc_method_used = final_vc
-        current_metrics = next((h["metrics"] for h in reversed(history)
-                                if h["vc_method"] == final_vc), {})
+        selected = final_attempt_from(final_decision, history)
+        final_vc = selected["vc_method"]
+        current_metrics = selected["metrics"]
+        self.logger.info(f"[最终选择] {final_vc}")
+        if final_vc:
+            self.ctx.select_vc(final_vc, selected["vc_params"], with_mask)
         self.logger.info(f"[最终汇总] 共 {len(history)} 次尝试")
         for i, h in enumerate(history):
             self.logger.info(f"  第{i+1}次: VC={h['vc_method']} | metrics={json.dumps(h.get('metrics', {}), ensure_ascii=False)}")
@@ -1442,6 +1430,8 @@ class ReflexionAgent:
         result = {
             "success": True,
             "final_vc_method": final_vc,
+            "final_vc_params": selected["vc_params"],
+            "final_audio_dir": self.ctx.vc_audio_dir if final_vc else None,
             "attempts": len(history),
             "history": history,
             "final_metrics": current_metrics,
@@ -1452,7 +1442,7 @@ class ReflexionAgent:
         self.logger.info(f"[结果] 已写入: {result_path}")
 
         # ── 写入跨运行双层 memory（先 Layer-2 run，再 LLM 总结 Layer-1；失败只 warning） ──
-        if self.memory:
+        if self.memory and current_metrics:
             try:
                 self.memory.record_run(
                     input_dir=self.input_dir,
@@ -1461,12 +1451,14 @@ class ReflexionAgent:
                     output_dir=self.output_dir,
                     history=history,
                     final_vc_method=final_vc,
+                    final_vc_params=selected["vc_params"],
                     success=bool(result.get("success")),
                     task_meta=self.task_meta,
                     baseline_bacc=(baseline_ds or {}).get('downstream_bacc'),
                     final_metrics=current_metrics,
                     artifacts={
                         'agent_result': result_path,
+                        'audio_dir': result['final_audio_dir'],
                         'log': self.logger_file,
                     },
                     llm_call=lambda s, u: json.dumps(
@@ -1484,13 +1476,13 @@ class ReflexionAgent:
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Reflexion Agent — 基于评估反馈自动调整 VC 方法',
+        description='CASA — 基于评估反馈自动调整 VC 方法',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 示例:
-  python reflexion_agent.py -i /path/to/audio -r "匿名化中文音频，SNR尽量高，不需要内容匿名"
-  python reflexion_agent.py -i /path/to/audio -r "匿名化，不要改变韵律" --max_reflections 5
-  python reflexion_agent.py -i /path/to/audio -r "..." --llm Qwen2.5-32B-Instruct
+  python casa_downstream.py -i /path/to/audio -r "匿名化中文音频，SNR尽量高，不需要内容匿名"
+  python casa_downstream.py -i /path/to/audio -r "匿名化，不要改变韵律" --max_reflections 5
+  python casa_downstream.py -i /path/to/audio -r "..." --llm Qwen2.5-32B-Instruct
         """)
     parser.add_argument('--input_dir', '-i', required=True, help='输入音频目录')
     parser.add_argument('--request', '-r', required=True, help='自然语言任务描述')
@@ -1536,7 +1528,7 @@ def main():
         print(f"错误: 脚本不存在: {args.downstream_script}")
         sys.exit(1)
 
-    agent = ReflexionAgent(
+    agent = CASA(
         input_dir=args.input_dir,
         output_dir=args.output_dir,
         middle_dir=args.middle_dir,

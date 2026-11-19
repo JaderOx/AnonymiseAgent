@@ -12,7 +12,7 @@ trans_dir = "/path/to/data_backup/crisis/mask_accuracy/biyuan/trans_clear"
 mask_dir = "/path/to/data_backup/crisis/mask_accuracy/biyuan/Qwen2.5-32B-Instruct-gp=20-default"
 log_dir = "/path/to/data_backup/crisis/mask_accuracy/biyuan/Qwen2.5-32B-Instruct-gp=20-default"
 logmode = "DEBUG"
-NO_WER_LANGUAGE = {"中文", "日文"}
+from configs.config_loader import uses_character_timestamps
 # 超参数
 group_size = 20              # 每group_size句分一组处理
 
@@ -223,7 +223,7 @@ def char_to_word_positions(
     Returns:
         (word_start_timestamp, word_end_timestamp) 词级别的时间戳范围
     """
-    if language in NO_WER_LANGUAGE:
+    if uses_character_timestamps(language):
         # 按字处理，每个字就是一个词
         word_start_timestamp = word_timestamps[char_start] if char_start < len(word_timestamps) else word_timestamps[-1]
         word_end_timestamp = word_timestamps[char_end] if char_end < len(word_timestamps) else word_timestamps[-1] + 100
