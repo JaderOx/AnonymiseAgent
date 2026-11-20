@@ -11,8 +11,8 @@ tts_methods/
 
 # ── 运行产物（输入 / 中间 / 输出 / 下游）────────────────────
 results/
-output/
-middle/
+examples/audio_out/
+examples/audio_middle/
 seedvc_output/
 demo/workspace/
 _smoke*/
